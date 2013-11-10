@@ -1,31 +1,36 @@
+import time
 import threading
-from select import select
+from select import poll
+from VdePlug import VdePlug, VdeStream
+
+from select import POLLIN, POLLOUT, POLLHUP, POLLERR, POLLNVAL
 
 import tornado.ioloop
 import tornado.web
 
 from tornado import websocket
-from pytun import TunTapDevice, IFF_TAP, IFF_NO_PI
 
 class TunThread(threading.Thread):
-    def __init__(self, tun, socket, *args, **kwargs):
+    def __init__(self, plug, socket, *args, **kwargs):
         super(TunThread, self).__init__(*args, **kwargs)
-        self.tun = tun
+        self.plug = plug
         self.socket = socket
-        self.running = True;
+        self.running = True
 
     def run(self):
+        p = poll()
+        p.register(self.plug.datafd().fileno(), POLLIN)
         while(self.running):
-            readable, writable, excepted = select([self.tun], [], [self.tun], 0.01)
-            for tun in readable:
-                buf = tun.read(tun.mtu)
-                print('read %s byte message from %s' % (len(buf), tun.name))
-                print(':'.join('{0:x}'.format(ord(c)) for c in str(buf)))
-                self.socket.write_message(str(buf), binary=True)
-            for tun in excepted:
-                self.running = False
+            pollret = p.poll(1000)
+            for (f,e) in pollret:
+                if f == self.plug.datafd().fileno() and (e & POLLIN):
+                    buf = self.plug.recv(2000)
+                    if len(buf):
+                        print('read %s byte message' % len(buf))
+                        print(':'.join('{0:02x}'.format(ord(c)) for c in str(buf)))
+                        self.socket.write_message(str(buf), binary=True)
 
-        self.tun.close()
+        self.plug.close()
 
 class MainHandler(websocket.WebSocketHandler):
     def __init__(self, *args, **kwargs):
@@ -34,25 +39,24 @@ class MainHandler(websocket.WebSocketHandler):
 
     def open(self):
         self.set_nodelay(True)
-        self.tun = TunTapDevice(flags= (IFF_TAP | IFF_NO_PI))
-        self.tun.addr = '192.168.1.1'
-        self.tun.dstaddr = '192.168.1.2'
-        self.tun.netmask = '255.255.255.0'
-        self.tun.mtu = 1500
-        self.tun.up()
-        self.thread = TunThread(tun=self.tun, socket = self)
+        self.plug = VdePlug('/tmp/myvde.ctl')
+
+        self.thread = TunThread(plug=self.plug, socket = self)
         self.thread.start()
 
     def on_message(self, message):
-        print('wrote %s byte message to %s' % (len(message), self.tun.name))
-        print(':'.join('{0:x}'.format(ord(c)) for c in message))
-        self.tun.write(message)
+        print('wrote %s byte message' % len(message))
+        print(':'.join('{0:02x}'.format(ord(c)) for c in message))
+        self.plug.send(message)
 
     def on_close(self):
-        print('Closing %s' % self.tun.name)
-        self.tun.close()
+        print('Closing connection')
+
         if self.thread is not None:
             self.thread.running = False
+            self.thread.join()
+        else:
+            self.plug.close()
 
 application = tornado.web.Application([(r'/', MainHandler)])
 
