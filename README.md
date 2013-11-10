@@ -1,4 +1,4 @@
-#Web Socket Proxy
+#WebSockets Proxy
 
 This is two different Python WebSockets servers which handle sending/receivng
 ethernet frames. tuntapapp.py works with TAP devices (creates one device per
