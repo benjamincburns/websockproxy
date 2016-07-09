@@ -11,5 +11,6 @@ EXPOSE 80
 
 RUN pip install -r /opt/websockproxy/requirements.txt
 
+WORKDIR /opt/websockproxy/
 CMD /opt/websockproxy/docker-startup.sh
 
