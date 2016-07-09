@@ -5,7 +5,7 @@ After=docker.service
 
 [Service]
 Restart=always
-ExecStart=/usr/bin/docker run --rm --privileged -p 8080:80 --name jor1k-relay jor1k-relay:latest
+ExecStart=/usr/bin/docker run --rm --privileged -p 8080:80 --name jor1k-relay benjamincburns/jor1k-relay:latest
 
 RestartSec=2min
 
