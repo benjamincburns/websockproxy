@@ -10,7 +10,7 @@ Could use some cleanup!
 It's quite simple. The program starts off by creating a TAP device and listening
 for websocket connections on port 80. When clients connect, ethernet frames
 received via the websocket are switched between connected clients and the TAP
-device. All communication is done via raw ethernet frames.o
+device. All communication is done via raw ethernet frames.
 
 To use this in support of a virtual network you must set up the host system as
 a DHCP server and router.
