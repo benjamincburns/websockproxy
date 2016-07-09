@@ -43,7 +43,7 @@ class TunThread(threading.Thread):
     def __init__(self, *args, **kwargs):
         super(TunThread, self).__init__(*args, **kwargs)
         self.running = True
-        self.tun = TunTapDevice(flags= (IFF_TAP | IFF_NO_PI))
+        self.tun = TunTapDevice(name="tap0", flags= (IFF_TAP | IFF_NO_PI))
         self.tun.addr = '10.5.0.1'
         self.tun.netmask = '255.255.0.0'
         self.tun.mtu = 1500
@@ -181,9 +181,8 @@ if __name__ == '__main__':
     tunthread.start()
  
     args = sys.argv
-    args.append('--log_file_prefix=/var/log/relay/relay-server.log')
     tornado.options.parse_command_line(args)
-    application.listen(9999)
+    application.listen(80)
     loop = tornado.ioloop.IOLoop.instance()
     try:
         loop.start()
