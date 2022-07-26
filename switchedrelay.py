@@ -3,6 +3,7 @@ import time
 import threading
 import logging
 import traceback
+import functools
 
 from select import poll
 from select import POLLIN, POLLOUT, POLLHUP, POLLERR, POLLNVAL
@@ -66,13 +67,13 @@ class TunThread(threading.Thread):
                             mac = buf[0:6]
                             if mac == BROADCAST or (ord(mac[0]) & 0x1) == 1:
                                 for socket in macmap.values():
-                                    def send_message():
+                                    def send_message(socket):
                                         try:
                                             socket.rate_limited_downstream(str(buf))
                                         except:
                                             pass
 
-                                    loop.add_callback(send_message)
+                                    loop.add_callback(functools.partial(send_message, socket))
 
                             elif macmap.get(mac, False):
                                 def send_message():
