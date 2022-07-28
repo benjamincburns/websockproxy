@@ -1,4 +1,2 @@
-argparse==1.2.1
-python-pytun==2.2.1
-tornado==3.1.1
-wsgiref==0.1.2
+python-pytun==2.4.1
+tornado==6.2
