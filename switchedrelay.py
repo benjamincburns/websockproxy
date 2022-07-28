@@ -21,7 +21,6 @@ import tornado.options
 from tornado import websocket
 
 FORMAT = '%(asctime)-15s %(message)s'
-RATE = 40980.0 * 1000 #unit: bytes
 BROADCAST = '%s%s%s%s%s%s' % (chr(0xff),chr(0xff),chr(0xff),chr(0xff),chr(0xff),chr(0xff))
 PING_INTERVAL = 30
 
@@ -92,10 +91,10 @@ class MainHandler(websocket.WebSocketHandler):
         logger.info('%s: connected.' % self.remote_ip)
         self.thread = None
         self.mac = ''
-        self.allowance = RATE #unit: messages
+        self.allowance = tornado.options.options.rate #unit: messages
         self.last_check = time.time() #floating-point, e.g. usec accuracy. Unit: seconds
-        self.upstream = RateLimitingState(RATE, name='upstream', clientip=self.remote_ip)
-        self.downstream = RateLimitingState(RATE, name='downstream', clientip=self.remote_ip)
+        self.upstream = RateLimitingState(self.allowance, name='upstream', clientip=self.remote_ip)
+        self.downstream = RateLimitingState(self.allowance, name='downstream', clientip=self.remote_ip)
 
     def on_pong(self, data):
         logger.debug("Pong")
@@ -167,6 +166,7 @@ if __name__ == '__main__':
     args = sys.argv
     tornado.options.define("tap_name", default=None, help="TUN/TAP device name. If not set, will try to create it.")
     tornado.options.define("ws_port", default=8080, help="Port to launch WebSocket server on")
+    tornado.options.define("rate", default=40980, help="Rate limiting")
     tornado.options.parse_command_line(args)
     tunthread = TunThread()
     tunthread.start()
