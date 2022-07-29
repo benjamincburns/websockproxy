@@ -1,4 +1,4 @@
-FROM ubuntu:jammy
+FROM ubuntu:xenial
 
 LABEL org.opencontainers.image.authors="benjamin.c.burns@gmail.com"
 
