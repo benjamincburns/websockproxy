@@ -165,12 +165,12 @@ application = tornado.web.Application([(r'/', MainHandler)])
 if __name__ == '__main__':
     args = sys.argv
     tornado.options.define("tap_name", default=None, help="TUN/TAP device name. If not set, will try to create it.")
-    tornado.options.define("ws_port", default=8080, help="Port to launch WebSocket server on")
+    tornado.options.define("ws_port", default=80, help="Port to launch WebSocket server on")
     tornado.options.define("rate", default=40980, help="Rate limiting")
     tornado.options.parse_command_line(args)
     tunthread = TunThread()
     tunthread.start()
-    application.listen(8080)
+    application.listen(tornado.options.options.ws_port)
     loop = tornado.ioloop.IOLoop.instance()
     try:
         loop.start()
