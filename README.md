@@ -27,7 +27,7 @@ basic NAT functionality and dnsmasq for DHCP support.
 
 To set up the relay via docker simply run
 
-```
+```shell
 docker run --privileged -p 8080:80 --name relay benjamincburns/jor1k-relay:latest
 ```
 
