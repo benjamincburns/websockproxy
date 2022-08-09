@@ -10,45 +10,40 @@ from select import POLLIN, POLLOUT, POLLHUP, POLLERR, POLLNVAL
 
 from pytun import TunTapDevice, IFF_TAP, IFF_NO_PI
 
-
 from limiter import RateLimitingState
 
+import tornado.concurrent
+import tornado.gen
 import tornado.ioloop
 import tornado.web
 import tornado.options
 
-from tornado.concurrent import return_future
-
 from tornado import websocket
 
-
 FORMAT = '%(asctime)-15s %(message)s'
-RATE = 40980.0 #unit: bytes
 BROADCAST = '%s%s%s%s%s%s' % (chr(0xff),chr(0xff),chr(0xff),chr(0xff),chr(0xff),chr(0xff))
 PING_INTERVAL = 30
 
 logger = logging.getLogger('relay')
 
-
 macmap = {}
 
-@return_future
 def delay_future(t, callback):
-    timestamp = time.time()
-    if timestamp < t:
-        return
-    else:
-        callback(t)
+    yield tornado.gen.sleep(t)
+    callback(time.time())
 
 class TunThread(threading.Thread):
     def __init__(self, *args, **kwargs):
         super(TunThread, self).__init__(*args, **kwargs)
         self.running = True
-        self.tun = TunTapDevice(name="tap0", flags= (IFF_TAP | IFF_NO_PI))
-        self.tun.addr = '10.5.0.1'
-        self.tun.netmask = '255.255.0.0'
-        self.tun.mtu = 1500
-        self.tun.up()
+        tap_name = tornado.options.options.tap_name or "tap0"
+        self.tun = TunTapDevice(name=tap_name, flags= (IFF_TAP | IFF_NO_PI))
+        if tornado.options.options.tap_name is None:
+            logger.info("Setting TUN/TAP settings because not set…")
+            self.tun.addr = '10.5.0.1'
+            self.tun.netmask = '255.255.0.0'
+            self.tun.mtu = 1500
+            self.tun.up()
 
     def write(self, message):
         self.tun.write(message)
@@ -96,22 +91,13 @@ class MainHandler(websocket.WebSocketHandler):
         logger.info('%s: connected.' % self.remote_ip)
         self.thread = None
         self.mac = ''
-        self.allowance = RATE #unit: messages
+        self.allowance = tornado.options.options.rate #unit: messages
         self.last_check = time.time() #floating-point, e.g. usec accuracy. Unit: seconds
-        self.upstream = RateLimitingState(RATE, name='upstream', clientip=self.remote_ip)
-        self.downstream = RateLimitingState(RATE, name='downstream', clientip=self.remote_ip)
-
-        ping_future = delay_future(time.time()+PING_INTERVAL, self.do_ping)
-        loop.add_future(ping_future, lambda: None)
-
-    def do_ping(self, timestamp):
-        self.ping(str(timestamp))
-
-        ping_future = delay_future(time.time()+PING_INTERVAL, self.do_ping)
-        loop.add_future(ping_future, lambda: None)
+        self.upstream = RateLimitingState(self.allowance, name='upstream', clientip=self.remote_ip)
+        self.downstream = RateLimitingState(self.allowance, name='downstream', clientip=self.remote_ip)
 
     def on_pong(self, data):
-        pass
+        logger.debug("Pong")
 
     def rate_limited_downstream(self, message):
         if self.downstream.do_throttle(message):
@@ -177,13 +163,14 @@ class MainHandler(websocket.WebSocketHandler):
 application = tornado.web.Application([(r'/', MainHandler)])
 
 if __name__ == '__main__':
-
+    args = sys.argv
+    tornado.options.define("tap_name", default=None, help="TUN/TAP device name. If not set, will try to create it.")
+    tornado.options.define("ws_port", default=80, help="Port to launch WebSocket server on")
+    tornado.options.define("rate", default=40980, help="Rate limiting")
+    tornado.options.parse_command_line(args)
     tunthread = TunThread()
     tunthread.start()
- 
-    args = sys.argv
-    tornado.options.parse_command_line(args)
-    application.listen(80)
+    application.listen(tornado.options.options.ws_port)
     loop = tornado.ioloop.IOLoop.instance()
     try:
         loop.start()
