@@ -5,11 +5,9 @@ import logging
 import traceback
 import functools
 
-from select import poll
-from select import POLLIN, POLLOUT, POLLHUP, POLLERR, POLLNVAL
+from select import poll, POLLIN
 
 from pytun import TunTapDevice, IFF_TAP, IFF_NO_PI
-
 
 from limiter import RateLimitingState
 
@@ -35,7 +33,6 @@ BROADCAST = "%s%s%s%s%s%s" % (
 PING_INTERVAL = 30
 
 logger = logging.getLogger("relay")
-
 
 macmap = {}
 
@@ -71,9 +68,7 @@ class TunThread(threading.Thread):
                 pollret = p.poll(1000)
                 for f, e in pollret:
                     if f == self.tun.fileno() and (e & POLLIN):
-                        buf = self.tun.read(
-                            self.tun.mtu + 18
-                        )  # MTU doesn't include header or CRC32
+                        buf = self.tun.read(self.tun.mtu + 18)  # MTU doesn't include header or CRC32
                         if len(buf):
                             mac = buf[0:6]
                             if mac == BROADCAST or (ord(mac[0]) & 0x1) == 1:
@@ -114,16 +109,9 @@ class MainHandler(websocket.WebSocketHandler):
         self.thread = None
         self.mac = ""
         self.allowance = RATE  # unit: messages
-        self.last_check = (
-            time.time()
-        )  # floating-point, e.g. usec accuracy. Unit: seconds
-        self.upstream = RateLimitingState(
-            RATE, name="upstream", clientip=self.remote_ip
-        )
-        self.downstream = RateLimitingState(
-            RATE, name="downstream", clientip=self.remote_ip
-        )
-
+        self.last_check = (time.time())  # floating-point, e.g. usec accuracy. Unit: seconds
+        self.upstream = RateLimitingState(RATE, name="upstream", clientip=self.remote_ip)
+        self.downstream = RateLimitingState(RATE, name="downstream", clientip=self.remote_ip)
         ping_future = delay_future(time.time() + PING_INTERVAL, self.do_ping)
         loop.add_future(ping_future, lambda: None)
 
