@@ -1,5 +1,6 @@
 import time
 
+
 class RateLimitingState(object):
     def __init__(self, rate, clientip, name):
         self.name = name
@@ -16,10 +17,10 @@ class RateLimitingState(object):
         self.allowance += time_passed * self.rate
 
         if self.allowance > self.rate:
-            self.allowance = self.rate #throttle
+            self.allowance = self.rate  # throttle
 
         if self.allowance > 1.0:
             self.allowance -= len(message)
-            return True;
+            return True
 
         return False
