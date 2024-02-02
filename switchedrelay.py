@@ -22,15 +22,23 @@ from tornado.concurrent import return_future
 from tornado import websocket
 
 
-FORMAT = '%(asctime)-15s %(message)s'
-RATE = 40980.0 #unit: bytes
-BROADCAST = '%s%s%s%s%s%s' % (chr(0xff),chr(0xff),chr(0xff),chr(0xff),chr(0xff),chr(0xff))
+FORMAT = "%(asctime)-15s %(message)s"
+RATE = 40980.0  # unit: bytes
+BROADCAST = "%s%s%s%s%s%s" % (
+    chr(0xFF),
+    chr(0xFF),
+    chr(0xFF),
+    chr(0xFF),
+    chr(0xFF),
+    chr(0xFF),
+)
 PING_INTERVAL = 30
 
-logger = logging.getLogger('relay')
+logger = logging.getLogger("relay")
 
 
 macmap = {}
+
 
 @return_future
 def delay_future(t, callback):
@@ -40,13 +48,14 @@ def delay_future(t, callback):
     else:
         callback(t)
 
+
 class TunThread(threading.Thread):
     def __init__(self, *args, **kwargs):
         super(TunThread, self).__init__(*args, **kwargs)
         self.running = True
-        self.tun = TunTapDevice(name="tap0", flags= (IFF_TAP | IFF_NO_PI))
-        self.tun.addr = '10.5.0.1'
-        self.tun.netmask = '255.255.0.0'
+        self.tun = TunTapDevice(name="tap0", flags=(IFF_TAP | IFF_NO_PI))
+        self.tun.addr = "10.5.0.1"
+        self.tun.netmask = "255.255.0.0"
         self.tun.mtu = 1500
         self.tun.up()
 
@@ -57,25 +66,31 @@ class TunThread(threading.Thread):
         p = poll()
         p.register(self.tun, POLLIN)
         try:
-            while(self.running):
-                #TODO: log IP headers in the future
+            while self.running:
+                # TODO: log IP headers in the future
                 pollret = p.poll(1000)
-                for (f,e) in pollret:
+                for f, e in pollret:
                     if f == self.tun.fileno() and (e & POLLIN):
-                        buf = self.tun.read(self.tun.mtu+18) #MTU doesn't include header or CRC32
+                        buf = self.tun.read(
+                            self.tun.mtu + 18
+                        )  # MTU doesn't include header or CRC32
                         if len(buf):
                             mac = buf[0:6]
                             if mac == BROADCAST or (ord(mac[0]) & 0x1) == 1:
                                 for socket in macmap.values():
+
                                     def send_message(socket):
                                         try:
                                             socket.rate_limited_downstream(str(buf))
                                         except:
                                             pass
 
-                                    loop.add_callback(functools.partial(send_message, socket))
+                                    loop.add_callback(
+                                        functools.partial(send_message, socket)
+                                    )
 
                             elif macmap.get(mac, False):
+
                                 def send_message():
                                     try:
                                         macmap[mac].rate_limited_downstream(str(buf))
@@ -84,30 +99,38 @@ class TunThread(threading.Thread):
 
                                 loop.add_callback(send_message)
         except:
-            logger.error('closing due to tun error')
+            logger.error("closing due to tun error")
         finally:
             self.tun.close()
 
 
 class MainHandler(websocket.WebSocketHandler):
     def __init__(self, *args, **kwargs):
-        super(MainHandler, self).__init__(*args,**kwargs)
-        self.remote_ip = self.request.headers.get('X-Forwarded-For', self.request.remote_ip)
-        logger.info('%s: connected.' % self.remote_ip)
+        super(MainHandler, self).__init__(*args, **kwargs)
+        self.remote_ip = self.request.headers.get(
+            "X-Forwarded-For", self.request.remote_ip
+        )
+        logger.info("%s: connected." % self.remote_ip)
         self.thread = None
-        self.mac = ''
-        self.allowance = RATE #unit: messages
-        self.last_check = time.time() #floating-point, e.g. usec accuracy. Unit: seconds
-        self.upstream = RateLimitingState(RATE, name='upstream', clientip=self.remote_ip)
-        self.downstream = RateLimitingState(RATE, name='downstream', clientip=self.remote_ip)
+        self.mac = ""
+        self.allowance = RATE  # unit: messages
+        self.last_check = (
+            time.time()
+        )  # floating-point, e.g. usec accuracy. Unit: seconds
+        self.upstream = RateLimitingState(
+            RATE, name="upstream", clientip=self.remote_ip
+        )
+        self.downstream = RateLimitingState(
+            RATE, name="downstream", clientip=self.remote_ip
+        )
 
-        ping_future = delay_future(time.time()+PING_INTERVAL, self.do_ping)
+        ping_future = delay_future(time.time() + PING_INTERVAL, self.do_ping)
         loop.add_future(ping_future, lambda: None)
 
     def do_ping(self, timestamp):
         self.ping(str(timestamp))
 
-        ping_future = delay_future(time.time()+PING_INTERVAL, self.do_ping)
+        ping_future = delay_future(time.time() + PING_INTERVAL, self.do_ping)
         loop.add_future(ping_future, lambda: None)
 
     def on_pong(self, data):
@@ -121,16 +144,16 @@ class MainHandler(websocket.WebSocketHandler):
         self.set_nodelay(True)
 
     def on_message(self, message):
-        #TODO: log IP headers in the future
+        # TODO: log IP headers in the future
 
-        #Logs which user is tied to which MAC so that we detect which user is acting maliciously
+        # Logs which user is tied to which MAC so that we detect which user is acting maliciously
         if self.mac != message[6:12]:
             if macmap.get(self.mac, False):
                 del macmap[self.mac]
 
             self.mac = message[6:12]
-            formatted_mac = ':'.join('{0:02x}'.format(ord(a)) for a in message[6:12]) 
-            logger.info('%s: using mac %s' % (self.remote_ip, formatted_mac))
+            formatted_mac = ":".join("{0:02x}".format(ord(a)) for a in message[6:12])
+            logger.info("%s: using mac %s" % (self.remote_ip, formatted_mac))
 
             macmap[self.mac] = self
 
@@ -140,7 +163,7 @@ class MainHandler(websocket.WebSocketHandler):
                 if self.upstream.do_throttle(message):
                     for socket in macmap.values():
                         try:
-                                socket.write_message(str(message),binary=True)
+                            socket.write_message(str(message), binary=True)
                         except:
                             pass
 
@@ -148,7 +171,7 @@ class MainHandler(websocket.WebSocketHandler):
             elif macmap.get(dest, False):
                 if self.upstream.do_throttle(message):
                     try:
-                        macmap[dest].write_message(str(message),binary=True)
+                        macmap[dest].write_message(str(message), binary=True)
                     except:
                         pass
             else:
@@ -157,14 +180,14 @@ class MainHandler(websocket.WebSocketHandler):
 
         except:
             tb = traceback.format_exc()
-            logger.error('%s: error on receive. Closing\n%s' % (self.remote_ip, tb))
+            logger.error("%s: error on receive. Closing\n%s" % (self.remote_ip, tb))
             try:
                 self.close()
             except:
                 pass
 
     def on_close(self):
-        logger.info('%s: disconnected.' % self.remote_ip)
+        logger.info("%s: disconnected." % self.remote_ip)
 
         if self.thread is not None:
             self.thread.running = False
@@ -174,13 +197,16 @@ class MainHandler(websocket.WebSocketHandler):
         except:
             pass
 
-application = tornado.web.Application([(r'/', MainHandler)])
+    def check_origin(self, origin):
+        return True
 
-if __name__ == '__main__':
 
+application = tornado.web.Application([(r"/", MainHandler)])
+
+if __name__ == "__main__":
     tunthread = TunThread()
     tunthread.start()
- 
+
     args = sys.argv
     tornado.options.parse_command_line(args)
     application.listen(80)
@@ -190,5 +216,4 @@ if __name__ == '__main__':
     except:
         pass
 
-    tunthread.running = False;
-
+    tunthread.running = False

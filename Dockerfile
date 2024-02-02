@@ -16,5 +16,3 @@ RUN pip2 install -r /opt/websockproxy/requirements.txt
 EXPOSE 80
 
 CMD /opt/websockproxy/docker-startup.sh
-
-
