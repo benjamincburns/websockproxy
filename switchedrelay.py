@@ -80,9 +80,7 @@ class TunThread(threading.Thread):
                                         except:
                                             pass
 
-                                    loop.add_callback(
-                                        functools.partial(send_message, socket)
-                                    )
+                                    loop.add_callback(functools.partial(send_message, socket))
 
                             elif macmap.get(mac, False):
 
@@ -102,9 +100,7 @@ class TunThread(threading.Thread):
 class MainHandler(websocket.WebSocketHandler):
     def __init__(self, *args, **kwargs):
         super(MainHandler, self).__init__(*args, **kwargs)
-        self.remote_ip = self.request.headers.get(
-            "X-Forwarded-For", self.request.remote_ip
-        )
+        self.remote_ip = self.request.headers.get("X-Forwarded-For", self.request.remote_ip)
         logger.info("%s: connected." % self.remote_ip)
         self.thread = None
         self.mac = ""
