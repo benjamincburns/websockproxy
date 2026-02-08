@@ -1,23 +1,26 @@
 *.py[cod]
+__pycache__/
 
 # C extensions
 *.so
 
-# Packages
+# Distribution / packaging
 *.egg
-*.egg-info
-dist
-build
-eggs
-parts
-bin
-var
-sdist
-develop-eggs
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+bin/
+var/
+sdist/
+develop-eggs/
 .installed.cfg
-lib
-lib64
-__pycache__
+lib/
+lib64/
+
+# Virtual environments
+.venv/
 
 # Installer logs
 pip-log.txt
@@ -30,7 +33,7 @@ nosetests.xml
 # Translations
 *.mo
 
-# Mr Developer
+# IDE
 .mr.developer.cfg
 .project
 .pydevproject

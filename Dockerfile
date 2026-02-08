@@ -1,20 +1,31 @@
-FROM ubuntu:focal
+# Build stage - compile C extensions
+FROM python:3.12-alpine AS builder
 
-LABEL org.opencontainers.image.authors="benjamin.c.burns@gmail.com"
+RUN apk add --no-cache build-base linux-headers
 
-RUN apt-get update && apt-get install -y python2 python2-dev iptables dnsmasq uml-utilities net-tools build-essential curl && apt-get clean
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-RUN curl https://bootstrap.pypa.io/pip/2.7/get-pip.py --output get-pip.py && python2 get-pip.py && rm get-pip.py
-
-COPY docker-image-config/docker-startup.sh switchedrelay.py limiter.py requirements.txt /opt/websockproxy/
-COPY docker-image-config/dnsmasq/interface docker-image-config/dnsmasq/dhcp /etc/dnsmasq.d/
+COPY pyproject.toml README.md LICENSE /opt/websockproxy/
+COPY src/ /opt/websockproxy/src/
 
 WORKDIR /opt/websockproxy/
 
-RUN pip2 install -r /opt/websockproxy/requirements.txt
+RUN uv sync --no-dev
+
+# Runtime stage
+FROM python:3.12-alpine
+
+LABEL org.opencontainers.image.authors="benjamin.c.burns@gmail.com"
+
+RUN apk add --no-cache iptables dnsmasq iproute2 bash
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+COPY --from=builder /opt/websockproxy/ /opt/websockproxy/
+COPY docker-image-config/dnsmasq/interface docker-image-config/dnsmasq/dhcp /etc/dnsmasq.d/
+COPY docker-image-config/docker-startup.sh /opt/websockproxy/docker-startup.sh
+
+WORKDIR /opt/websockproxy/
 
 EXPOSE 80
 
-CMD /opt/websockproxy/docker-startup.sh
-
-
+CMD ["/opt/websockproxy/docker-startup.sh"]
