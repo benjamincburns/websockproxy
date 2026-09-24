@@ -17,6 +17,14 @@ import websockets
 
 
 FORMAT = '%(asctime)-15s %(message)s'
+ETHERNET_HEADER_LEN = 14 #dst mac, src mac, ethertype
+BROADCAST = b'\xff\xff\xff\xff\xff\xff'
+MAX_PENDING_SENDS = 128 #per client; frames beyond this are dropped
+PING_INTERVAL = 30
+PING_TIMEOUT = 30
+
+
+## Settings from the environment (documented in README.md) ##
 
 def _env_rate(name, default):
     value = os.environ.get(name, '').strip()
@@ -30,19 +38,23 @@ def _env_rate(name, default):
         raise ValueError(f'{name} must be a non-negative number of bytes per second, got {value!r}')
     return rate
 
+def _env_port(name, default):
+    value = os.environ.get(name, '').strip()
+    if not value:
+        return default
+    if not (value.isascii() and value.isdigit()) or not 1 <= int(value) <= 65535:
+        raise ValueError(f'{name} must be a port number from 1 to 65535, got {value!r}')
+    return int(value)
+
+# Address and port to listen for websocket connections on
+HOST = os.environ.get('WEBSOCKPROXY_HOST', '').strip() or '0.0.0.0'
+PORT = _env_port('WEBSOCKPROXY_PORT', 80)
 # Per-client limit in each direction, in bytes per second; 0 disables throttling
 RATE = _env_rate('WEBSOCKPROXY_RATE_LIMIT', 40980.0)
-ETHERNET_HEADER_LEN = 14 #dst mac, src mac, ethertype
-BROADCAST = b'\xff\xff\xff\xff\xff\xff'
-MAX_PENDING_SENDS = 128 #per client; frames beyond this are dropped
-PING_INTERVAL = 30
-PING_TIMEOUT = 30
-HOST = '0.0.0.0'
 # Proxies (IPs or CIDRs, comma-separated) whose X-Forwarded-For header is trusted.
 TRUSTED_PROXIES = [ipaddress.ip_network(n.strip(), strict=False)
                    for n in os.environ.get('WEBSOCKPROXY_TRUSTED_PROXIES', '').split(',')
                    if n.strip()]
-PORT = 80
 
 logger = logging.getLogger('relay')
 

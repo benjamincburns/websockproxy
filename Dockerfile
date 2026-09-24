@@ -23,6 +23,7 @@ RUN apk add --no-cache iptables dnsmasq iproute2 bash
 COPY --from=builder /opt/websockproxy/ /opt/websockproxy/
 COPY docker-image-config/dnsmasq/interface docker-image-config/dnsmasq/dhcp /etc/dnsmasq.d/
 COPY docker-image-config/docker-startup.sh /opt/websockproxy/docker-startup.sh
+COPY scripts/setup-network.sh /opt/websockproxy/setup-network.sh
 
 WORKDIR /opt/websockproxy/
 

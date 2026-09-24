@@ -55,3 +55,31 @@ async def test_zero_rate_limit_lets_clients_send_unthrottled(monkeypatch, tap):
         client.on_message(f)
 
     assert len(tap.written) == 200
+
+
+@pytest.mark.parametrize('value, expected', [
+    (None, "'0.0.0.0'"),
+    ('127.0.0.1', "'127.0.0.1'"),
+    ('::', "'::'"),
+])
+def test_host_setting(value, expected):
+    code, out, err = relay_setting('HOST', {'WEBSOCKPROXY_HOST': value})
+
+    assert code == 0, err
+    assert out == expected
+
+
+@pytest.mark.parametrize('value, expected', [(None, '80'), ('8080', '8080'), (' 443 ', '443')])
+def test_port_setting(value, expected):
+    code, out, err = relay_setting('PORT', {'WEBSOCKPROXY_PORT': value})
+
+    assert code == 0, err
+    assert out == expected
+
+
+@pytest.mark.parametrize('value', ['http', '0', '65536', '-80', '80.5', '8²'])
+def test_invalid_port_is_rejected(value):
+    code, _, err = relay_setting('PORT', {'WEBSOCKPROXY_PORT': value})
+
+    assert code != 0
+    assert 'WEBSOCKPROXY_PORT' in err
