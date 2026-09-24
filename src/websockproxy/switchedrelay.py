@@ -22,6 +22,7 @@ logger = logging.getLogger('relay')
 
 
 macmap = {}
+tundev = None
 
 def _fire_and_forget(coro):
     """Schedule a coroutine without leaving unhandled task exceptions.
@@ -51,22 +52,26 @@ def delay_future(t, callback=None):
         return future
 
 class TunDevice:
-    def __init__(self):
-        self.tun = TunTapDevice(name="tap0", flags= (IFF_TAP | IFF_NO_PI))
+    def __init__(self, tun=None):
+        if tun is None:
+            tun = TunTapDevice(name="tap0", flags= (IFF_TAP | IFF_NO_PI))
+        self.tun = tun
         self.tun.addr = '10.5.0.1'
         self.tun.netmask = '255.255.0.0'
         self.tun.mtu = 1500
         self.tun.up()
+        self._loop = None
 
     def write(self, message):
         self.tun.write(message)
 
     def start(self):
-        loop.add_reader(self.tun.fileno(), self._on_readable)
+        self._loop = asyncio.get_running_loop()
+        self._loop.add_reader(self.tun.fileno(), self._on_readable)
 
     def stop(self):
         try:
-            loop.remove_reader(self.tun.fileno())
+            self._loop.remove_reader(self.tun.fileno())
         except:
             pass
         self.tun.close()
@@ -201,32 +206,33 @@ async def handler(websocket):
     finally:
         client.on_close()
 
-if __name__ == '__main__':
+async def run():
+    tundev.start()
+    logger.info('TAP device registered with event loop.')
+    try:
+        async with websockets.serve(handler, "0.0.0.0", 80, ping_interval=None, ping_timeout=None):
+            logger.info('WebSocket relay listening on 0.0.0.0:80')
+            await asyncio.Future()  # Run forever
+    finally:
+        tundev.stop()
 
-    args = sys.argv
+def main():
+    global tundev
+
     logging.basicConfig(format=FORMAT, level=logging.INFO)
 
     logger.info('Creating TAP device tap0 (10.5.0.1/16, mtu 1500)...')
     tundev = TunDevice()
     logger.info('TAP device tap0 is up.')
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-    tundev.start()
-    logger.info('TAP device registered with event loop.')
-
-    async def main():
-        async with websockets.serve(handler, "0.0.0.0", 80, ping_interval=None, ping_timeout=None):
-            logger.info('WebSocket relay listening on 0.0.0.0:80')
-            await asyncio.Future()  # Run forever
-
     try:
-        loop.run_until_complete(main())
+        asyncio.run(run())
     except KeyboardInterrupt:
         logger.info('Shutting down (KeyboardInterrupt)...')
     except:
         pass
 
-    tundev.stop()
     logger.info('TAP device closed. Goodbye.')
+
+if __name__ == '__main__':
+    main()
