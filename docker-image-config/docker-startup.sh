@@ -24,4 +24,4 @@ iptables-save
 #########################################
 
 dnsmasq --conf-dir=/etc/dnsmasq.d
-uv run python -m websockproxy.switchedrelay
+/opt/websockproxy/.venv/bin/python -m websockproxy.switchedrelay
