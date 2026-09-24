@@ -4,9 +4,8 @@ A websocket ethernet switch built using Python's asyncio and the
 [websockets](https://websockets.readthedocs.io/) library.
 
 Implements crude rate limiting on WebSocket connections to prevent abuse. Each
-client is limited to 40980 bytes per second in each direction by default; set
-`WEBSOCKPROXY_RATE_LIMIT` to change the limit, or to `0` to disable it (e.g.
-on a trusted local network).
+client is limited to 40980 bytes per second in each direction by default; see
+[Configuration](#configuration) to change or disable it.
 
 Could use some cleanup!
 
@@ -78,14 +77,9 @@ cloud metadata services (169.254.169.254) and CGNAT/VPN ranges. Nothing
 outside can open connections to guests. Guests on the relay can always reach
 each other, since the relay switches their frames directly.
 
-Two environment variables adjust this (both take comma- or space-separated
-lists):
-
-- `WEBSOCKPROXY_EGRESS_INTERFACES`: the interfaces guest traffic may leave
-  through. Defaults to the interface(s) carrying the IPv4 default route.
-  Setup fails if a listed interface doesn't exist.
-- `WEBSOCKPROXY_ALLOWED_PRIVATE_NETS`: IPv4 CIDRs guests may reach even
-  though they're non-public, such as a service on your LAN. Empty by default.
+`WEBSOCKPROXY_EGRESS_INTERFACES` and `WEBSOCKPROXY_ALLOWED_PRIVATE_NETS`
+adjust this (see [Configuration](#configuration)). For example, to let guests
+reach one machine on your LAN:
 
 ```shell
 docker run --privileged -p 8080:80 -e WEBSOCKPROXY_ALLOWED_PRIVATE_NETS=192.168.1.20/32 --name relay websockproxy
@@ -248,3 +242,50 @@ uv run test_ping.py ws://localhost:8080 1.2.3.4
 
 If no arguments are provided, it defaults to `ws://localhost:8080` and
 `www.google.com`.
+
+## Configuration
+
+Everything is configured with environment variables. With Docker, pass them
+with `-e NAME=value`. On a host, set them for the command that reads them,
+e.g. `sudo env WEBSOCKPROXY_PORT=8080 .venv/bin/websockproxy`. An empty
+variable means the default. Invalid values stop the relay (or the network
+setup) at startup with an error.
+
+### Relay
+
+Read by the relay (`websockproxy`) when it starts.
+
+| Variable | Default | Allowed values | Description |
+|---|---|---|---|
+| `WEBSOCKPROXY_HOST` | `0.0.0.0` | An IP address or hostname | Address to listen for websocket connections on. `0.0.0.0` listens on all IPv4 addresses, `::` on all IPv6 addresses (IPv6 only), `127.0.0.1` only on localhost (e.g. behind a reverse proxy on the same machine). |
+| `WEBSOCKPROXY_PORT` | `80` | An integer from 1 to 65535 | Port to listen on. The Docker image listens on 80 inside the container; choose the public port with `-p`. |
+| `WEBSOCKPROXY_RATE_LIMIT` | `40980` | A number ≥ 0 (decimals allowed) | Per-client limit in bytes per second, applied separately to traffic from and to each client. Clients may burst up to one second's worth. `0` disables rate limiting. |
+| `WEBSOCKPROXY_TRUSTED_PROXIES` | *(none)* | Comma-separated IPv4/IPv6 addresses or CIDR ranges | Reverse proxies whose `X-Forwarded-For` header is trusted for logging client IPs. The header is ignored from any other peer. See [Serving over TLS](#serving-over-tls-wss) for values to use. |
+
+### Guest network
+
+Read by `scripts/setup-network.sh`, which the Docker image runs at startup;
+see [Guest network access](#guest-network-access).
+
+| Variable | Default | Allowed values | Description |
+|---|---|---|---|
+| `WEBSOCKPROXY_EGRESS_INTERFACES` | The interface(s) carrying the IPv4 default route | Comma- or space-separated names of existing network interfaces, other than `tap0` | Interfaces guest traffic may leave through; NAT is applied on these. Traffic to any other interface is dropped. Setup fails if there's no default route and this isn't set. |
+| `WEBSOCKPROXY_ALLOWED_PRIVATE_NETS` | *(none)* | Comma- or space-separated IPv4 CIDRs (e.g. `192.168.1.20/32`) | Non-public destinations guests may reach anyway. All other non-public addresses (private ranges, loopback, link-local, CGNAT and so on) are blocked. |
+
+### Fixed settings
+
+These aren't configurable with environment variables:
+
+- **Guest network:** TAP device `tap0`, gateway `10.5.0.1/16`, MTU 1500.
+  These are set in `scripts/setup-network.sh`,
+  `src/websockproxy/switchedrelay.py` and
+  `docker-image-config/dnsmasq/interface`.
+- **DHCP and DNS for guests:** addresses `10.5.0.2`–`10.5.254.254` with
+  15-minute leases; guests are told to use `10.5.0.1`, `8.8.8.8` and
+  `8.8.4.4` for DNS. Edit `docker-image-config/dnsmasq/dhcp` to change these,
+  keeping the range inside `10.5.0.0/16` (and rebuild the image if you use
+  Docker).
+- **Relay internals** (constants in `src/websockproxy/switchedrelay.py`):
+  keepalive pings every 30 seconds, with clients that don't answer within 30
+  seconds disconnected; at most 128 queued frames per client, beyond which
+  frames are dropped.
