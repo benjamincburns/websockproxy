@@ -1,3 +1,6 @@
+import asyncio
+import base64
+import os
 import socket
 
 import pytest
@@ -94,3 +97,46 @@ def tap(monkeypatch):
     dev = switchedrelay.TunDevice(tun=fake)
     monkeypatch.setattr(switchedrelay, 'tundev', dev)
     return fake
+
+
+async def raw_ws_connect(port, host='127.0.0.1'):
+    """Open a WebSocket connection without a client library.
+
+    Unlike a websockets client, nothing answers pings automatically, so
+    this behaves like a peer that has silently gone away.
+    """
+    reader, writer = await asyncio.open_connection(host, port)
+    key = base64.b64encode(os.urandom(16)).decode()
+    writer.write(
+        f'GET / HTTP/1.1\r\nHost: {host}:{port}\r\nUpgrade: websocket\r\n'
+        f'Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n'
+        f'Sec-WebSocket-Version: 13\r\n\r\n'.encode()
+    )
+    await reader.readuntil(b'\r\n\r\n')
+    return reader, writer
+
+
+def masked_frame(opcode, payload):
+    """Encode a client-to-server frame (masked with a zero key)."""
+    assert len(payload) < 126
+    return bytes([0x80 | opcode, 0x80 | len(payload)]) + b'\x00' * 4 + payload
+
+
+async def read_frame(reader):
+    """Read one server-to-client frame; returns (opcode, payload)."""
+    b0, b1 = await reader.readexactly(2)
+    length = b1 & 0x7f
+    if length == 126:
+        length = int.from_bytes(await reader.readexactly(2), 'big')
+    elif length == 127:
+        length = int.from_bytes(await reader.readexactly(8), 'big')
+    return b0 & 0x0f, await reader.readexactly(length)
+
+
+async def wait_until(predicate, timeout=2.0):
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while not predicate():
+        if loop.time() > deadline:
+            raise AssertionError('condition not met before timeout')
+        await asyncio.sleep(0.01)

@@ -17,6 +17,7 @@ FORMAT = '%(asctime)-15s %(message)s'
 RATE = 40980.0 #unit: bytes
 BROADCAST = b'\xff\xff\xff\xff\xff\xff'
 PING_INTERVAL = 30
+PING_TIMEOUT = 30
 HOST = '0.0.0.0'
 PORT = 80
 
@@ -29,7 +30,7 @@ tundev = None
 def _fire_and_forget(coro):
     """Schedule a coroutine without leaving unhandled task exceptions.
 
-    Used for ws.send() / ws.ping() / ws.close() calls that mirror
+    Used for ws.send() / ws.close() calls that mirror
     Tornado's synchronous write_message() — we don't await the result,
     so we suppress ConnectionClosed to avoid 'Task exception was never
     retrieved' warnings.
@@ -41,17 +42,6 @@ def _silence_connection_closed(task):
     exc = task.exception() if not task.cancelled() else None
     if exc and not isinstance(exc, websockets.exceptions.ConnectionClosed):
         logger.error('Unexpected send error: %s', exc)
-
-def delay_future(t, callback=None):
-    future = asyncio.Future()
-    timestamp = time.time()
-    if timestamp < t:
-        return future
-    else:
-        future.set_result(t)
-        if callback:
-            callback(t)
-        return future
 
 class TunDevice:
     def __init__(self, tun=None):
@@ -117,18 +107,6 @@ class ClientHandler:
         self.last_check = time.time() #floating-point, e.g. usec accuracy. Unit: seconds
         self.upstream = RateLimitingState(RATE, name='upstream', clientip=self.remote_ip)
         self.downstream = RateLimitingState(RATE, name='downstream', clientip=self.remote_ip)
-
-        ping_future = delay_future(time.time()+PING_INTERVAL, self.do_ping)
-        ping_future.add_done_callback(lambda: None)
-
-    def do_ping(self, timestamp):
-        _fire_and_forget(self.ws.ping(str(timestamp).encode()))
-
-        ping_future = delay_future(time.time()+PING_INTERVAL, self.do_ping)
-        ping_future.add_done_callback(lambda: None)
-
-    def on_pong(self, data):
-        pass
 
     def rate_limited_downstream(self, message):
         if self.downstream.do_throttle(message):
@@ -208,11 +186,18 @@ async def handler(websocket):
     finally:
         client.on_close()
 
+def serve(host, port):
+    # websockets pings every PING_INTERVAL seconds and closes connections
+    # whose pong doesn't arrive within PING_TIMEOUT, so dead peers are
+    # dropped (and their macmap entries released).
+    return websockets.serve(handler, host, port,
+                            ping_interval=PING_INTERVAL, ping_timeout=PING_TIMEOUT)
+
 async def run():
     tundev.start()
     logger.info('TAP device registered with event loop.')
     try:
-        async with websockets.serve(handler, HOST, PORT, ping_interval=None, ping_timeout=None):
+        async with serve(HOST, PORT):
             logger.info('WebSocket relay listening on %s:%d', HOST, PORT)
             await asyncio.Future()  # Run forever
     finally:
