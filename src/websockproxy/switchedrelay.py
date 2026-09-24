@@ -130,8 +130,7 @@ class ClientHandler:
 
         #Logs which user is tied to which MAC so that we detect which user is acting maliciously
         if self.mac != message[6:12]:
-            if macmap.get(self.mac, False):
-                del macmap[self.mac]
+            self._release_mac()
 
             self.mac = message[6:12]
             formatted_mac = ':'.join('{0:02x}'.format(a) for a in message[6:12]) 
@@ -177,10 +176,12 @@ class ClientHandler:
         if self.thread is not None:
             self.thread.running = False
 
-        try:
+        self._release_mac()
+
+    def _release_mac(self):
+        # Another client may have taken over this MAC; only remove our own entry.
+        if macmap.get(self.mac) is self:
             del macmap[self.mac]
-        except:
-            pass
 
 async def handler(websocket):
     client = ClientHandler(websocket)

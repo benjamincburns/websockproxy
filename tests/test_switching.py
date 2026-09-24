@@ -3,7 +3,7 @@ import asyncio
 from websockproxy import switchedrelay
 from websockproxy.switchedrelay import ClientHandler, TunDevice
 
-from conftest import BROADCAST, GATEWAY_MAC, MAC_A, FakeTap, FakeWebSocket, frame
+from conftest import BROADCAST, GATEWAY_MAC, MAC_A, MAC_B, MAC_C, FakeTap, FakeWebSocket, frame
 
 
 async def settle():
@@ -39,3 +39,26 @@ async def test_tun_device_start_uses_running_loop():
 
     assert ws.sent == [f]
     assert fake.closed
+
+
+async def test_disconnect_leaves_mac_owned_by_another_client(tap):
+    a = ClientHandler(FakeWebSocket())
+    b = ClientHandler(FakeWebSocket())
+    a.on_message(frame(GATEWAY_MAC, MAC_A))
+    b.on_message(frame(GATEWAY_MAC, MAC_A))
+
+    a.on_close()
+
+    assert switchedrelay.macmap.get(MAC_A) is b
+
+
+async def test_mac_change_leaves_mac_owned_by_another_client(tap):
+    a = ClientHandler(FakeWebSocket())
+    b = ClientHandler(FakeWebSocket())
+    a.on_message(frame(GATEWAY_MAC, MAC_A))
+    b.on_message(frame(GATEWAY_MAC, MAC_A))
+
+    a.on_message(frame(GATEWAY_MAC, MAC_C))
+
+    assert switchedrelay.macmap.get(MAC_A) is b
+    assert switchedrelay.macmap.get(MAC_C) is a
