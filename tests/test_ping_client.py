@@ -1,6 +1,7 @@
 import asyncio
 
-from scapy.all import DNS, DNSQR, DNSRR, IP, UDP, Ether, raw
+import pytest
+from scapy.all import ARP, BOOTP, DHCP, DNS, DNSRR, ICMP, IP, UDP, Ether, raw
 
 import test_ping
 from test_ping import WebSocketNIC
@@ -8,6 +9,7 @@ from test_ping import WebSocketNIC
 GATEWAY_MAC = '02:00:00:00:00:01'
 GATEWAY_IP = '10.5.0.1'
 OUR_IP = '10.5.0.50'
+TARGET_IP = '93.184.216.34'
 
 
 class FakeNetwork:
@@ -17,8 +19,9 @@ class FakeNetwork:
     the replies are delivered to the NIC on the next event loop iteration.
     """
 
-    def __init__(self, responder=lambda pkt: []):
+    def __init__(self, responder, yield_after_send=False):
         self.responder = responder
+        self.yield_after_send = yield_after_send
         self.nic = None
         self.sent = []
 
@@ -28,10 +31,60 @@ class FakeNetwork:
         loop = asyncio.get_running_loop()
         for reply in self.responder(pkt):
             loop.call_soon(self.nic._dispatch, Ether(raw(reply)))
+        if self.yield_after_send:
+            # Like a real websocket send() waiting for the transport to drain
+            await asyncio.sleep(0)
 
 
-def make_nic(responder=lambda pkt: []):
-    net = FakeNetwork(responder)
+def lan(pkt):
+    """Answer the NIC's requests like the relay's LAN would."""
+    if pkt.haslayer(BOOTP) and pkt[BOOTP].op == 1:
+        return [dhcp_reply(pkt, _dhcp_type(pkt) == 1 and 'offer' or 'ack')]
+    if pkt.haslayer(ARP) and pkt[ARP].op == 1:
+        return [arp_reply(pkt)]
+    if pkt.haslayer(DNS) and pkt[DNS].qr == 0:
+        return [dns_reply(pkt, [DNSRR(rrname=pkt[DNS].qd[0].qname, type='A', rdata=TARGET_IP)])]
+    if pkt.haslayer(ICMP) and pkt[ICMP].type == 8:
+        return [echo_reply(pkt)]
+    return []
+
+
+def _dhcp_type(pkt):
+    return dict(o for o in pkt[DHCP].options if isinstance(o, tuple))['message-type']
+
+
+def dhcp_reply(request, message_type, xid=None, yiaddr=OUR_IP):
+    return (
+        Ether(src=GATEWAY_MAC, dst='ff:ff:ff:ff:ff:ff')
+        / IP(src=GATEWAY_IP, dst='255.255.255.255')
+        / UDP(sport=67, dport=68)
+        / BOOTP(op=2, xid=request[BOOTP].xid if xid is None else xid,
+                yiaddr=yiaddr, siaddr=GATEWAY_IP, chaddr=request[BOOTP].chaddr)
+        / DHCP(options=[('message-type', message_type), ('server_id', GATEWAY_IP),
+                        ('router', GATEWAY_IP), ('name_server', GATEWAY_IP),
+                        ('subnet_mask', '255.255.0.0'), 'end'])
+    )
+
+
+def arp_reply(request, psrc=None, hwsrc=GATEWAY_MAC):
+    return Ether(src=hwsrc, dst=request[Ether].src) / ARP(
+        op='is-at', hwsrc=hwsrc, psrc=psrc or request[ARP].pdst,
+        hwdst=request[ARP].hwsrc, pdst=request[ARP].psrc,
+    )
+
+
+def echo_reply(request, **icmp_overrides):
+    icmp = {'id': request[ICMP].id, 'seq': request[ICMP].seq, **icmp_overrides}
+    return (
+        Ether(src=GATEWAY_MAC, dst=request[Ether].src)
+        / IP(src=request[IP].dst, dst=request[IP].src)
+        / ICMP(type=0, **icmp)
+        / request[ICMP].payload
+    )
+
+
+def make_nic(responder=lan, yield_after_send=False):
+    net = FakeNetwork(responder, yield_after_send)
     nic = WebSocketNIC(net)
     net.nic = nic
     nic.ip = OUR_IP
@@ -41,13 +94,14 @@ def make_nic(responder=lambda pkt: []):
     return nic, net
 
 
-def dns_reply(query, answers):
+def dns_reply(query, answers, id=None, dport=None):
     """Build a reply to ``query`` carrying the given resource records."""
     return (
         Ether(src=GATEWAY_MAC, dst=query[Ether].src)
         / IP(src=query[IP].dst, dst=query[IP].src)
-        / UDP(sport=53, dport=query[UDP].sport)
-        / DNS(id=query[DNS].id, qr=1, rd=1, ra=1, qd=query[DNS].qd, an=answers)
+        / UDP(sport=53, dport=query[UDP].sport if dport is None else dport)
+        / DNS(id=query[DNS].id if id is None else id, qr=1, rd=1, ra=1,
+              qd=query[DNS].qd, an=answers)
     )
 
 
@@ -61,3 +115,21 @@ async def test_dns_resolve_follows_cname_to_a_record():
     nic, _ = make_nic(responder)
 
     assert await nic.dns_resolve('www.example.com') == '93.184.216.34'
+
+
+OPERATIONS = {
+    'dhcp': lambda nic: nic.dhcp_acquire(),
+    'arp': lambda nic: nic.arp_resolve(GATEWAY_IP),
+    'dns': lambda nic: nic.dns_resolve('example.com'),
+    'ping': lambda nic: nic.ping(TARGET_IP, count=1, timeout=1),
+}
+
+
+@pytest.mark.parametrize('operation', OPERATIONS)
+async def test_reply_arriving_while_send_is_in_progress_is_not_lost(operation):
+    nic, _ = make_nic(yield_after_send=True)
+
+    result = await asyncio.wait_for(OPERATIONS[operation](nic), 3)
+
+    if operation == 'ping':
+        assert None not in result

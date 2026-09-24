@@ -103,10 +103,16 @@ class WebSocketNIC:
         if fut and not fut.done():
             fut.set_result(pkt)
 
-    async def _wait_for(self, key, timeout=10):
-        fut = asyncio.get_event_loop().create_future()
+    async def _exchange(self, frame, key, timeout=10):
+        """Send a frame and wait for the reply dispatched under ``key``.
+
+        The waiter is registered before sending, so a reply that arrives
+        while send() is still in progress isn't lost.
+        """
+        fut = asyncio.get_running_loop().create_future()
         self._pending[key] = fut
         try:
+            await self.send_frame(raw(frame))
             return await asyncio.wait_for(fut, timeout=timeout)
         finally:
             self._pending.pop(key, None)
@@ -127,10 +133,7 @@ class WebSocketNIC:
             / BOOTP(chaddr=chaddr, xid=xid, flags=0x8000)
             / DHCP(options=[("message-type", "discover"), "end"])
         )
-        await self.send_frame(raw(discover))
-
-        # Offer
-        offer = await self._wait_for("dhcp")
+        offer = await self._exchange(discover, "dhcp")
         offered_ip = offer[BOOTP].yiaddr
         opts = _dhcp_opts(offer)
         server_id = opts.get("server_id", offer[BOOTP].siaddr)
@@ -152,10 +155,7 @@ class WebSocketNIC:
                 ]
             )
         )
-        await self.send_frame(raw(request))
-
-        # ACK
-        ack = await self._wait_for("dhcp")
+        ack = await self._exchange(request, "dhcp")
         self.ip = ack[BOOTP].yiaddr
         ack_opts = _dhcp_opts(ack)
         self.gateway_ip = ack_opts.get("router", server_id)
@@ -204,8 +204,7 @@ class WebSocketNIC:
             hwdst="00:00:00:00:00:00",
             pdst=target_ip,
         )
-        await self.send_frame(raw(pkt))
-        reply = await self._wait_for("arp", timeout=5)
+        reply = await self._exchange(pkt, "arp", timeout=5)
         mac = reply[ARP].hwsrc
         logger.info(f"ARP   {target_ip} is-at {mac}")
         return mac
@@ -220,8 +219,7 @@ class WebSocketNIC:
             / UDP(sport=random.randint(1024, 65535), dport=53)
             / DNS(id=random.randint(0, 0xFFFF), rd=1, qd=DNSQR(qname=hostname))
         )
-        await self.send_frame(raw(pkt))
-        reply = await self._wait_for("dns", timeout=5)
+        reply = await self._exchange(pkt, "dns", timeout=5)
         for ans in reply[DNS].an:
             if ans.type == 1:  # A record (possibly after CNAMEs)
                 logger.info(f"DNS   {hostname} -> {ans.rdata}")
@@ -241,9 +239,8 @@ class WebSocketNIC:
                 / Raw(load=bytes(56))
             )
             t0 = time.monotonic()
-            await self.send_frame(raw(pkt))
             try:
-                reply = await self._wait_for("icmp", timeout=timeout)
+                reply = await self._exchange(pkt, "icmp", timeout=timeout)
                 rtt = (time.monotonic() - t0) * 1000
                 logger.info(f"PING  Reply from {target_ip}: seq={seq} time={rtt:.1f}ms")
                 results.append(rtt)
