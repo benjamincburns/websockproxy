@@ -28,6 +28,9 @@ logger = logging.getLogger('relay')
 macmap = {}
 tundev = None
 
+def format_mac(mac):
+    return ':'.join('{0:02x}'.format(a) for a in mac)
+
 def _fire_and_forget(coro):
     """Schedule a coroutine without leaving unhandled task exceptions.
 
@@ -53,6 +56,7 @@ class TunDevice:
         self.tun.netmask = '255.255.0.0'
         self.tun.mtu = 1500
         self.tun.up()
+        self.hwaddr = self.tun.hwaddr
         self._loop = None
         self._stopped = False
         self.failed = None  # future; gets the fatal error if the device dies
@@ -116,6 +120,7 @@ class ClientHandler:
         logger.info('%s: connected.' % self.remote_ip)
         self.thread = None
         self.mac = b''
+        self._rejected_mac = None
         self.allowance = RATE #unit: messages
         self.last_check = time.time() #floating-point, e.g. usec accuracy. Unit: seconds
         self.upstream = RateLimitingState(RATE, name='upstream', clientip=self.remote_ip)
@@ -129,14 +134,8 @@ class ClientHandler:
         #TODO: log IP headers in the future
 
         #Logs which user is tied to which MAC so that we detect which user is acting maliciously
-        if self.mac != message[6:12]:
-            self._release_mac()
-
-            self.mac = message[6:12]
-            formatted_mac = ':'.join('{0:02x}'.format(a) for a in message[6:12]) 
-            logger.info('%s: using mac %s' % (self.remote_ip, formatted_mac))
-
-            macmap[self.mac] = self
+        if self.mac != message[6:12] and not self._claim_mac(message[6:12]):
+            return
 
         dest = message[0:6]
         try:
@@ -177,6 +176,25 @@ class ClientHandler:
             self.thread.running = False
 
         self._release_mac()
+
+    def _claim_mac(self, mac):
+        # Refuse MACs another client is using, the gateway's own MAC, and
+        # group (multicast/broadcast) addresses, none of which a client may
+        # send from. Otherwise a client could redirect traffic meant for
+        # someone else to itself.
+        owner = macmap.get(mac)
+        if (mac[0] & 0x1) or mac == tundev.hwaddr or (owner is not None and owner is not self):
+            if mac != self._rejected_mac:
+                self._rejected_mac = mac
+                logger.warning('%s: dropping frames from mac %s (in use or reserved)',
+                               self.remote_ip, format_mac(mac))
+            return False
+
+        self._release_mac()
+        self.mac = mac
+        macmap[mac] = self
+        logger.info('%s: using mac %s', self.remote_ip, format_mac(mac))
+        return True
 
     def _release_mac(self):
         # Another client may have taken over this MAC; only remove our own entry.

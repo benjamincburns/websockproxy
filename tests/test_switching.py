@@ -41,24 +41,80 @@ async def test_tun_device_start_uses_running_loop():
     assert fake.closed
 
 
-async def test_disconnect_leaves_mac_owned_by_another_client(tap):
+async def test_rejected_claimant_disconnect_leaves_owner_entry(tap):
     a = ClientHandler(FakeWebSocket())
     b = ClientHandler(FakeWebSocket())
     a.on_message(frame(GATEWAY_MAC, MAC_A))
     b.on_message(frame(GATEWAY_MAC, MAC_A))
 
+    b.on_close()
+
+    assert switchedrelay.macmap.get(MAC_A) is a
+
+
+async def test_rejected_claimant_mac_change_leaves_owner_entry(tap):
+    a = ClientHandler(FakeWebSocket())
+    b = ClientHandler(FakeWebSocket())
+    a.on_message(frame(GATEWAY_MAC, MAC_A))
+    b.on_message(frame(GATEWAY_MAC, MAC_A))
+
+    b.on_message(frame(GATEWAY_MAC, MAC_C))
+
+    assert switchedrelay.macmap.get(MAC_A) is a
+    assert switchedrelay.macmap.get(MAC_C) is b
+
+
+async def test_client_cannot_hijack_mac_of_another_client(tap):
+    a_ws, b_ws, c_ws = FakeWebSocket(), FakeWebSocket(), FakeWebSocket()
+    a, b, c = ClientHandler(a_ws), ClientHandler(b_ws), ClientHandler(c_ws)
+    a.on_message(frame(GATEWAY_MAC, MAC_A))
+    c.on_message(frame(GATEWAY_MAC, MAC_C))
+    tap.written.clear()
+
+    spoofed = frame(GATEWAY_MAC, MAC_A)
+    b.on_message(spoofed)
+    to_a = frame(MAC_A, MAC_C)
+    c.on_message(to_a)
+    await settle()
+
+    assert switchedrelay.macmap[MAC_A] is a
+    assert tap.written == []
+    assert a_ws.sent == [to_a]
+    assert b_ws.sent == []
+
+
+async def test_client_cannot_claim_gateway_mac(tap):
+    a_ws, b_ws = FakeWebSocket(), FakeWebSocket()
+    a, b = ClientHandler(a_ws), ClientHandler(b_ws)
+    a.on_message(frame(GATEWAY_MAC, MAC_A))
+    tap.written.clear()
+
+    b.on_message(frame(BROADCAST, GATEWAY_MAC))
+    to_gateway = frame(GATEWAY_MAC, MAC_A)
+    a.on_message(to_gateway)
+    await settle()
+
+    assert GATEWAY_MAC not in switchedrelay.macmap
+    assert tap.written == [to_gateway]
+    assert a_ws.sent == []
+
+
+async def test_client_cannot_use_multicast_source_mac(tap):
+    client = ClientHandler(FakeWebSocket())
+
+    client.on_message(frame(GATEWAY_MAC, b'\x01\x00\x5e\x00\x00\x01'))
+    client.on_message(frame(GATEWAY_MAC, BROADCAST))
+
+    assert switchedrelay.macmap == {}
+    assert tap.written == []
+
+
+async def test_mac_can_be_reused_after_owner_disconnects(tap):
+    a = ClientHandler(FakeWebSocket())
+    b = ClientHandler(FakeWebSocket())
+    a.on_message(frame(GATEWAY_MAC, MAC_A))
     a.on_close()
 
-    assert switchedrelay.macmap.get(MAC_A) is b
-
-
-async def test_mac_change_leaves_mac_owned_by_another_client(tap):
-    a = ClientHandler(FakeWebSocket())
-    b = ClientHandler(FakeWebSocket())
-    a.on_message(frame(GATEWAY_MAC, MAC_A))
     b.on_message(frame(GATEWAY_MAC, MAC_A))
 
-    a.on_message(frame(GATEWAY_MAC, MAC_C))
-
-    assert switchedrelay.macmap.get(MAC_A) is b
-    assert switchedrelay.macmap.get(MAC_C) is a
+    assert switchedrelay.macmap[MAC_A] is b
