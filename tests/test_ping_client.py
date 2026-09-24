@@ -220,3 +220,13 @@ async def test_ping_ignores_echo_replies_for_other_requests(field):
     nic, _ = make_nic(responder)
 
     assert await nic.ping(TARGET_IP, count=1, timeout=0.3) == [None]
+
+
+def test_each_nic_gets_its_own_unicast_locally_administered_mac():
+    macs = {WebSocketNIC(None).mac for _ in range(20)}
+
+    assert len(macs) == 20
+    for mac in macs:
+        first_octet = int(mac.split(':')[0], 16)
+        assert first_octet & 0x01 == 0  # unicast
+        assert first_octet & 0x02 == 0x02  # locally administered

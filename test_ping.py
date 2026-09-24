@@ -41,9 +41,19 @@ from scapy.all import (
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s")
 logger = logging.getLogger(__name__)
 
-OUR_MAC = "de:ad:be:ef:ca:fe"
 DHCP_OFFER, DHCP_ACK, DHCP_NAK = 2, 5, 6
 BROADCAST_MAC = "ff:ff:ff:ff:ff:ff"
+
+
+def random_mac():
+    """A random unicast, locally administered MAC address.
+
+    The relay won't let two clients use the same MAC, so each run needs
+    its own.
+    """
+    octets = [random.randint(0, 255) for _ in range(6)]
+    octets[0] = (octets[0] & 0xFC) | 0x02
+    return ":".join(f"{o:02x}" for o in octets)
 
 
 class WebSocketNIC:
@@ -51,7 +61,7 @@ class WebSocketNIC:
 
     def __init__(self, ws):
         self.ws = ws
-        self.mac = OUR_MAC
+        self.mac = random_mac()
         self.ip = None
         self.gateway_ip = None
         self.gateway_mac = None
