@@ -1,4 +1,5 @@
 import sys
+import errno
 import time
 import logging
 import traceback
@@ -53,15 +54,21 @@ class TunDevice:
         self.tun.mtu = 1500
         self.tun.up()
         self._loop = None
+        self._stopped = False
+        self.failed = None  # future; gets the fatal error if the device dies
 
     def write(self, message):
         self.tun.write(message)
 
     def start(self):
         self._loop = asyncio.get_running_loop()
+        self.failed = self._loop.create_future()
         self._loop.add_reader(self.tun.fileno(), self._on_readable)
 
     def stop(self):
+        if self._stopped:
+            return
+        self._stopped = True
         try:
             self._loop.remove_reader(self.tun.fileno())
         except:
@@ -71,25 +78,31 @@ class TunDevice:
     def _on_readable(self):
         try:
             buf = self.tun.read(self.tun.mtu+18) #MTU doesn't include header or CRC32
-            if len(buf):
-                mac = buf[0:6]
-                if mac == BROADCAST or (mac[0] & 0x1) == 1:
-                    logger.debug('tun -> broadcast/multicast (%d bytes, %d clients)', len(buf), len(macmap))
-                    for client in macmap.values():
-                        try:
-                            client.rate_limited_downstream(buf)
-                        except:
-                            pass
-
-                elif macmap.get(mac, False):
-                    logger.debug('tun -> unicast (%d bytes)', len(buf))
-                    try:
-                        macmap[mac].rate_limited_downstream(buf)
-                    except:
-                        pass
-        except:
-            logger.error('closing due to tun error')
+        except OSError as e:
+            if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK, errno.EINTR):
+                return
+            logger.exception('TAP device read failed; shutting down.')
             self.stop()
+            if not self.failed.done():
+                self.failed.set_exception(e)
+            return
+
+        if len(buf):
+            mac = buf[0:6]
+            if mac == BROADCAST or (mac[0] & 0x1) == 1:
+                logger.debug('tun -> broadcast/multicast (%d bytes, %d clients)', len(buf), len(macmap))
+                for client in list(macmap.values()):
+                    try:
+                        client.rate_limited_downstream(buf)
+                    except Exception:
+                        logger.exception('%s: error sending to client', client.remote_ip)
+
+            elif macmap.get(mac, False):
+                logger.debug('tun -> unicast (%d bytes)', len(buf))
+                try:
+                    macmap[mac].rate_limited_downstream(buf)
+                except Exception:
+                    logger.exception('%s: error sending to client', macmap[mac].remote_ip)
 
 
 class ClientHandler:
@@ -199,7 +212,7 @@ async def run():
     try:
         async with serve(HOST, PORT):
             logger.info('WebSocket relay listening on %s:%d', HOST, PORT)
-            await asyncio.Future()  # Run forever
+            await tundev.failed  # Runs until the TAP device fails
     finally:
         tundev.stop()
 
