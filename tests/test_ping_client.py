@@ -133,3 +133,90 @@ async def test_reply_arriving_while_send_is_in_progress_is_not_lost(operation):
 
     if operation == 'ping':
         assert None not in result
+
+
+def answering(decoys_for, then=lan):
+    """A responder that sends decoy replies ahead of the genuine ones."""
+    def responder(pkt):
+        return decoys_for(pkt) + then(pkt)
+    return responder
+
+
+def is_dhcp(pkt, message_type):
+    return pkt.haslayer(BOOTP) and pkt[BOOTP].op == 1 and _dhcp_type(pkt) == message_type
+
+
+async def test_dhcp_ignores_offers_for_other_transactions_and_clients():
+    def decoys(pkt):
+        if not is_dhcp(pkt, 1):
+            return []
+        other_client = dhcp_reply(pkt, 'offer', yiaddr='10.5.0.98')
+        other_client[BOOTP].chaddr = bytes.fromhex('02bbbbbbbbbb')
+        return [dhcp_reply(pkt, 'offer', xid=pkt[BOOTP].xid ^ 1, yiaddr='10.5.0.99'), other_client]
+
+    nic, net = make_nic(answering(decoys))
+    await nic.dhcp_acquire()
+
+    requested = dict(o for o in net.sent[1][DHCP].options if isinstance(o, tuple))
+    assert requested['requested_addr'] == OUR_IP
+    assert nic.ip == OUR_IP
+
+
+async def test_dhcp_does_not_mistake_repeated_offer_for_ack():
+    def decoys(pkt):
+        return [dhcp_reply(pkt, 'offer', yiaddr='10.5.0.99')] if is_dhcp(pkt, 3) else []
+
+    nic, _ = make_nic(answering(decoys))
+    await nic.dhcp_acquire()
+
+    assert nic.ip == OUR_IP
+
+
+async def test_dhcp_nak_is_an_error():
+    def responder(pkt):
+        if is_dhcp(pkt, 3):
+            return [dhcp_reply(pkt, 'nak', yiaddr='0.0.0.0')]
+        return lan(pkt)
+
+    nic, _ = make_nic(responder)
+
+    with pytest.raises(RuntimeError, match='NAK'):
+        await nic.dhcp_acquire()
+
+
+async def test_arp_ignores_replies_for_other_addresses():
+    def decoys(pkt):
+        if pkt.haslayer(ARP):
+            return [arp_reply(pkt, psrc='10.5.0.77', hwsrc='02:77:77:77:77:77')]
+        return []
+
+    nic, _ = make_nic(answering(decoys))
+
+    assert await nic.arp_resolve(GATEWAY_IP) == GATEWAY_MAC
+
+
+async def test_dns_ignores_replies_to_other_queries():
+    def decoys(pkt):
+        if not pkt.haslayer(DNS):
+            return []
+        wrong = [DNSRR(rrname='example.com', type='A', rdata='6.6.6.6')]
+        return [
+            dns_reply(pkt, wrong, id=pkt[DNS].id ^ 1),
+            dns_reply(pkt, wrong, dport=pkt[UDP].sport ^ 1),
+        ]
+
+    nic, _ = make_nic(answering(decoys))
+
+    assert await nic.dns_resolve('example.com') == TARGET_IP
+
+
+@pytest.mark.parametrize('field', ['id', 'seq'])
+async def test_ping_ignores_echo_replies_for_other_requests(field):
+    def responder(pkt):
+        if pkt.haslayer(ICMP):
+            return [echo_reply(pkt, **{field: pkt[ICMP].getfieldval(field) ^ 1})]
+        return lan(pkt)
+
+    nic, _ = make_nic(responder)
+
+    assert await nic.ping(TARGET_IP, count=1, timeout=0.3) == [None]
