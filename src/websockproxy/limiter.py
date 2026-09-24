@@ -6,10 +6,10 @@ class RateLimitingState(object):
         self.clientip = clientip
         self.rate = rate
         self.allowance = rate
-        self.last_check = time.time()
+        self.last_check = time.monotonic()
 
     def do_throttle(self, message):
-        current = time.time()
+        current = time.monotonic()
         time_passed = current - self.last_check
 
         self.last_check = current
