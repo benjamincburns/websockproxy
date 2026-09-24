@@ -3,7 +3,7 @@ FROM python:3.12-alpine AS builder
 
 RUN apk add --no-cache build-base linux-headers
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.12.18 /uv /usr/local/bin/uv
 
 COPY pyproject.toml uv.lock README.md LICENSE /opt/websockproxy/
 COPY src/ /opt/websockproxy/src/
