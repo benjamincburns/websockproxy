@@ -1,11 +1,12 @@
 import ipaddress
+import logging
 
 import pytest
 
 from websockproxy import switchedrelay
 from websockproxy.switchedrelay import ClientHandler
 
-from conftest import FakeWebSocket
+from conftest import FakeWebSocket, raw_ws_connect, wait_until
 
 
 @pytest.fixture
@@ -45,3 +46,15 @@ def test_skips_chained_trusted_proxies(trust):
 def test_ignores_malformed_forwarded_for_entry(trust):
     trust('127.0.0.1/32')
     assert remote_ip('127.0.0.1', 'not-an-ip') == '127.0.0.1'
+
+
+async def test_real_connection_honours_forwarded_for_from_trusted_proxy(trust, tap, caplog):
+    trust('127.0.0.1/32')
+    async with switchedrelay.serve('127.0.0.1', 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        with caplog.at_level(logging.INFO, logger='relay'):
+            _, writer = await raw_ws_connect(port, headers={'X-Forwarded-For': '203.0.113.9'})
+            await wait_until(lambda: any('connected' in r.getMessage() for r in caplog.records))
+            writer.close()
+
+    assert '203.0.113.9: connected.' in caplog.messages

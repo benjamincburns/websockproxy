@@ -154,10 +154,9 @@ class ClientHandler:
     def __init__(self, websocket):
         self.ws = websocket
         self.remote_ip = websocket.remote_address[0] if websocket.remote_address else 'unknown'
-        if hasattr(websocket, 'request') and websocket.request is not None:
-            forwarded_for = websocket.request.headers.get('X-Forwarded-For')
-            if forwarded_for:
-                self.remote_ip = client_ip(self.remote_ip, forwarded_for)
+        forwarded_for = websocket.request.headers.get('X-Forwarded-For')
+        if forwarded_for:
+            self.remote_ip = client_ip(self.remote_ip, forwarded_for)
         logger.info('%s: connected.' % self.remote_ip)
         self.thread = None
         self.mac = b''

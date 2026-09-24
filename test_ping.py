@@ -3,7 +3,7 @@
 # requires-python = ">=3.10"
 # dependencies = [
 #     "scapy",
-#     "websockets>=13.0,<17",
+#     "websockets>=14.0,<17",
 # ]
 # ///
 """

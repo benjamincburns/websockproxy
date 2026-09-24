@@ -99,7 +99,7 @@ def tap(monkeypatch):
     return fake
 
 
-async def raw_ws_connect(port, host='127.0.0.1'):
+async def raw_ws_connect(port, host='127.0.0.1', headers=None):
     """Open a WebSocket connection without a client library.
 
     Unlike a websockets client, nothing answers pings automatically, so
@@ -110,7 +110,9 @@ async def raw_ws_connect(port, host='127.0.0.1'):
     writer.write(
         f'GET / HTTP/1.1\r\nHost: {host}:{port}\r\nUpgrade: websocket\r\n'
         f'Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n'
-        f'Sec-WebSocket-Version: 13\r\n\r\n'.encode()
+        f'Sec-WebSocket-Version: 13\r\n'.encode()
+        + b''.join(f'{k}: {v}\r\n'.encode() for k, v in (headers or {}).items())
+        + b'\r\n'
     )
     await reader.readuntil(b'\r\n\r\n')
     return reader, writer
