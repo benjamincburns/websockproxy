@@ -133,3 +133,22 @@ async def test_broadcast_goes_to_other_clients_and_tap_but_not_sender(tap):
     assert a_ws.sent == []
     assert b_ws.sent == [f]
     assert tap.written == [f]
+
+
+async def test_text_message_is_dropped(tap):
+    client = ClientHandler(FakeWebSocket())
+
+    client.on_message('x' * 60)
+
+    assert switchedrelay.macmap == {}
+    assert tap.written == []
+
+
+async def test_runt_frame_is_dropped(tap):
+    client = ClientHandler(FakeWebSocket())
+
+    client.on_message(GATEWAY_MAC + MAC_A[:4])
+    client.on_message(GATEWAY_MAC + MAC_A + b'\x08')
+
+    assert switchedrelay.macmap == {}
+    assert tap.written == []

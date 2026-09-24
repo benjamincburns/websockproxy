@@ -18,6 +18,7 @@ import websockets
 
 FORMAT = '%(asctime)-15s %(message)s'
 RATE = 40980.0 #unit: bytes
+ETHERNET_HEADER_LEN = 14 #dst mac, src mac, ethertype
 BROADCAST = b'\xff\xff\xff\xff\xff\xff'
 MAX_PENDING_SENDS = 128 #per client; frames beyond this are dropped
 PING_INTERVAL = 30
@@ -182,6 +183,10 @@ class ClientHandler:
 
     def on_message(self, message):
         #TODO: log IP headers in the future
+
+        if not isinstance(message, bytes) or len(message) < ETHERNET_HEADER_LEN:
+            logger.debug('%s: dropping message that is not an ethernet frame', self.remote_ip)
+            return
 
         #Logs which user is tied to which MAC so that we detect which user is acting maliciously
         if self.mac != message[6:12] and not self._claim_mac(message[6:12]):
