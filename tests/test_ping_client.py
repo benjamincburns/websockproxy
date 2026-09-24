@@ -230,3 +230,11 @@ def test_each_nic_gets_its_own_unicast_locally_administered_mac():
         first_octet = int(mac.split(':')[0], 16)
         assert first_octet & 0x01 == 0  # unicast
         assert first_octet & 0x02 == 0x02  # locally administered
+
+
+async def test_ipv6_target_is_rejected_up_front(monkeypatch, caplog):
+    # Port 1 refuses connections, so this only passes if main() never connects.
+    monkeypatch.setattr('sys.argv', ['test_ping.py', 'ws://127.0.0.1:1', '::1'])
+
+    assert await test_ping.main() == 2
+    assert 'IPv6' in caplog.text

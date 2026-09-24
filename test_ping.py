@@ -308,6 +308,14 @@ async def main():
     url = sys.argv[1] if len(sys.argv) > 1 else "ws://localhost:8080"
     hostname = sys.argv[2] if len(sys.argv) > 2 else "www.google.com"
 
+    try:
+        target_ip = ipaddress.ip_address(hostname)
+    except ValueError:
+        target_ip = None  # a hostname; resolved via DNS below
+    if target_ip is not None and target_ip.version != 4:
+        logger.error(f"IPv6 targets aren't supported: {hostname}")
+        return 2
+
     logger.info(f"Connecting to {url} ...")
     async with websockets.connect(url) as ws:
         nic = WebSocketNIC(ws)
@@ -315,11 +323,10 @@ async def main():
         try:
             await nic.dhcp_acquire()
             nic.gateway_mac = await nic.arp_resolve(nic.gateway_ip)
-            try:
-                ipaddress.ip_address(hostname)
-                target_ip = hostname
-            except ValueError:
+            if target_ip is None:
                 target_ip = await nic.dns_resolve(hostname)
+            else:
+                target_ip = str(target_ip)
 
             logger.info(f"PING  {hostname} ({target_ip}) ...")
             results = await nic.ping(target_ip, count=4)
