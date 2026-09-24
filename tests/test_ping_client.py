@@ -1,6 +1,7 @@
 import asyncio
 
 import pytest
+from websockets.exceptions import ConnectionClosedError
 from scapy.all import ARP, BOOTP, DHCP, DNS, DNSRR, ICMP, IP, UDP, Ether, raw
 
 import test_ping
@@ -238,3 +239,15 @@ async def test_ipv6_target_is_rejected_up_front(monkeypatch, caplog):
 
     assert await test_ping.main() == 2
     assert 'IPv6' in caplog.text
+
+
+async def test_release_on_closed_connection_does_not_raise():
+    class ClosedWebSocket:
+        async def send(self, frame_bytes):
+            raise ConnectionClosedError(None, None)
+
+    nic = WebSocketNIC(ClosedWebSocket())
+    nic.ip = OUR_IP
+    nic._server_id = GATEWAY_IP
+
+    await nic.dhcp_release()

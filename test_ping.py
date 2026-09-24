@@ -24,6 +24,7 @@ import sys
 import time
 
 import websockets
+from websockets.exceptions import ConnectionClosed
 from scapy.all import (
     ARP,
     BOOTP,
@@ -96,7 +97,7 @@ class WebSocketNIC:
                         self._dispatch(Ether(message))
                     except Exception:
                         pass
-        except websockets.exceptions.ConnectionClosed:
+        except ConnectionClosed:
             pass
 
     def _dispatch(self, pkt):
@@ -212,7 +213,11 @@ class WebSocketNIC:
                 ]
             )
         )
-        await self.send_frame(raw(release))
+        try:
+            await self.send_frame(raw(release))
+        except ConnectionClosed:
+            logger.warning(f"DHCP  Connection closed; couldn't release {self.ip}")
+            return
         logger.info(f"DHCP  Released {self.ip}")
 
     # ── ARP ──────────────────────────────────────────────────────────
@@ -348,8 +353,10 @@ async def main():
                 )
             return 0 if received else 1
         finally:
-            await nic.dhcp_release()
-            await nic.stop()
+            try:
+                await nic.dhcp_release()
+            finally:
+                await nic.stop()
 
 
 if __name__ == "__main__":
