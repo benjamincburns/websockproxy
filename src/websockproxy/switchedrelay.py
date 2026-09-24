@@ -17,6 +17,7 @@ import websockets
 FORMAT = '%(asctime)-15s %(message)s'
 RATE = 40980.0 #unit: bytes
 BROADCAST = b'\xff\xff\xff\xff\xff\xff'
+MAX_PENDING_SENDS = 128 #per client; frames beyond this are dropped
 PING_INTERVAL = 30
 PING_TIMEOUT = 30
 HOST = '0.0.0.0'
@@ -46,6 +47,7 @@ def _fire_and_forget(coro):
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
     task.add_done_callback(_silence_connection_closed)
+    return task
 
 def _silence_connection_closed(task):
     exc = task.exception() if not task.cancelled() else None
@@ -126,14 +128,24 @@ class ClientHandler:
         self.thread = None
         self.mac = b''
         self._rejected_mac = None
+        self._pending_sends = 0
         self.allowance = RATE #unit: messages
         self.last_check = time.time() #floating-point, e.g. usec accuracy. Unit: seconds
         self.upstream = RateLimitingState(RATE, name='upstream', clientip=self.remote_ip)
         self.downstream = RateLimitingState(RATE, name='downstream', clientip=self.remote_ip)
 
     def rate_limited_downstream(self, message):
+        # Drop frames for clients that aren't keeping up rather than
+        # queueing an unbounded number of sends.
+        if self._pending_sends >= MAX_PENDING_SENDS:
+            return
         if self.downstream.do_throttle(message):
-            _fire_and_forget(self.ws.send(message))
+            self._pending_sends += 1
+            task = _fire_and_forget(self.ws.send(message))
+            task.add_done_callback(self._on_send_done)
+
+    def _on_send_done(self, task):
+        self._pending_sends -= 1
 
     def on_message(self, message):
         #TODO: log IP headers in the future
@@ -150,19 +162,13 @@ class ClientHandler:
                     for client in macmap.values():
                         if client is self:
                             continue
-                        try:
-                            _fire_and_forget(client.ws.send(message))
-                        except:
-                            pass
+                        client.rate_limited_downstream(message)
 
                     tundev.write(message)
             elif macmap.get(dest, False):
                 if self.upstream.do_throttle(message):
                     logger.debug('%s: ws -> unicast client (%d bytes)', self.remote_ip, len(message))
-                    try:
-                        _fire_and_forget(macmap[dest].ws.send(message))
-                    except:
-                        pass
+                    macmap[dest].rate_limited_downstream(message)
             else:
                 if self.upstream.do_throttle(message):
                     logger.debug('%s: ws -> tun (%d bytes)', self.remote_ip, len(message))
