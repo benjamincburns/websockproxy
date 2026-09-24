@@ -1,5 +1,6 @@
 import os
 import sys
+import signal
 import errno
 import logging
 import traceback
@@ -269,13 +270,22 @@ def serve(host, port):
                             ping_interval=PING_INTERVAL, ping_timeout=PING_TIMEOUT)
 
 async def run():
+    loop = asyncio.get_running_loop()
+    sigterm = loop.create_future()
+    loop.add_signal_handler(signal.SIGTERM, lambda: sigterm.done() or sigterm.set_result(None))
+
     tundev.start()
     logger.info('TAP device registered with event loop.')
     try:
         async with serve(HOST, PORT):
             logger.info('WebSocket relay listening on %s:%d', HOST, PORT)
-            await tundev.failed  # Runs until the TAP device fails
+            # Run until asked to stop or the TAP device fails
+            await asyncio.wait([sigterm, tundev.failed], return_when=asyncio.FIRST_COMPLETED)
+            if tundev.failed.done():
+                tundev.failed.result()  # raises the TAP device error
+            logger.info('Shutting down (SIGTERM)...')
     finally:
+        loop.remove_signal_handler(signal.SIGTERM)
         tundev.stop()
 
 def main():
