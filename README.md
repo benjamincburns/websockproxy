@@ -99,7 +99,14 @@ to block those.
 
 ### Testing
 
-A test script is included that connects to the relay via WebSocket, obtains a
+Unit tests for the relay and the test client run without root or a TAP
+device:
+
+```shell
+uv run pytest
+```
+
+An end-to-end test script is included that connects to the relay via WebSocket, obtains a
 DHCP lease, resolves a hostname with DNS, and sends ICMP pings through the
 proxy. It uses [PEP 723](https://peps.python.org/pep-0723/) inline metadata,
 so uv handles its dependencies automatically:
