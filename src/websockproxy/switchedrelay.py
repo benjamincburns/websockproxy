@@ -27,6 +27,7 @@ logger = logging.getLogger('relay')
 
 macmap = {}
 tundev = None
+_background_tasks = set()
 
 def format_mac(mac):
     return ':'.join('{0:02x}'.format(a) for a in mac)
@@ -40,6 +41,10 @@ def _fire_and_forget(coro):
     retrieved' warnings.
     """
     task = asyncio.ensure_future(coro)
+    # The event loop only keeps weak references to tasks; hold a strong one
+    # until the task finishes so it isn't garbage-collected mid-flight.
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
     task.add_done_callback(_silence_connection_closed)
 
 def _silence_connection_closed(task):
