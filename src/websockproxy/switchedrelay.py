@@ -17,6 +17,8 @@ FORMAT = '%(asctime)-15s %(message)s'
 RATE = 40980.0 #unit: bytes
 BROADCAST = b'\xff\xff\xff\xff\xff\xff'
 PING_INTERVAL = 30
+HOST = '0.0.0.0'
+PORT = 80
 
 logger = logging.getLogger('relay')
 
@@ -210,8 +212,8 @@ async def run():
     tundev.start()
     logger.info('TAP device registered with event loop.')
     try:
-        async with websockets.serve(handler, "0.0.0.0", 80, ping_interval=None, ping_timeout=None):
-            logger.info('WebSocket relay listening on 0.0.0.0:80')
+        async with websockets.serve(handler, HOST, PORT, ping_interval=None, ping_timeout=None):
+            logger.info('WebSocket relay listening on %s:%d', HOST, PORT)
             await asyncio.Future()  # Run forever
     finally:
         tundev.stop()
@@ -229,8 +231,9 @@ def main():
         asyncio.run(run())
     except KeyboardInterrupt:
         logger.info('Shutting down (KeyboardInterrupt)...')
-    except:
-        pass
+    except Exception:
+        logger.exception('Relay stopped due to an error.')
+        sys.exit(1)
 
     logger.info('TAP device closed. Goodbye.')
 
