@@ -183,6 +183,9 @@ class ClientHandler:
             logger.debug('%s: dropping message that is not an ethernet frame', self.remote_ip)
             return
 
+        if not self.upstream.do_throttle(message):
+            return
+
         #Logs which user is tied to which MAC so that we detect which user is acting maliciously
         if self.mac != message[6:12] and not self._claim_mac(message[6:12]):
             return
@@ -190,22 +193,19 @@ class ClientHandler:
         dest = message[0:6]
         try:
             if dest == BROADCAST or (dest[0] & 0x1) == 1:
-                if self.upstream.do_throttle(message):
-                    logger.debug('%s: ws -> broadcast/multicast (%d bytes)', self.remote_ip, len(message))
-                    for client in macmap.values():
-                        if client is self:
-                            continue
-                        client.rate_limited_downstream(message)
+                logger.debug('%s: ws -> broadcast/multicast (%d bytes)', self.remote_ip, len(message))
+                for client in macmap.values():
+                    if client is self:
+                        continue
+                    client.rate_limited_downstream(message)
 
-                    tundev.write(message)
+                tundev.write(message)
             elif macmap.get(dest, False):
-                if self.upstream.do_throttle(message):
-                    logger.debug('%s: ws -> unicast client (%d bytes)', self.remote_ip, len(message))
-                    macmap[dest].rate_limited_downstream(message)
+                logger.debug('%s: ws -> unicast client (%d bytes)', self.remote_ip, len(message))
+                macmap[dest].rate_limited_downstream(message)
             else:
-                if self.upstream.do_throttle(message):
-                    logger.debug('%s: ws -> tun (%d bytes)', self.remote_ip, len(message))
-                    tundev.write(message)
+                logger.debug('%s: ws -> tun (%d bytes)', self.remote_ip, len(message))
+                tundev.write(message)
 
         except:
             tb = traceback.format_exc()

@@ -152,3 +152,13 @@ async def test_runt_frame_is_dropped(tap):
 
     assert switchedrelay.macmap == {}
     assert tap.written == []
+
+
+async def test_throttled_frames_do_not_change_mac(tap):
+    client = ClientHandler(FakeWebSocket())
+    client.on_message(frame(GATEWAY_MAC, MAC_A))
+    client.upstream.allowance = -1e9  # far over its upstream limit
+
+    client.on_message(frame(GATEWAY_MAC, MAC_B))
+
+    assert switchedrelay.macmap == {MAC_A: client}
