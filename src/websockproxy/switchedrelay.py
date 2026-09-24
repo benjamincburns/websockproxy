@@ -143,8 +143,10 @@ class ClientHandler:
                 if self.upstream.do_throttle(message):
                     logger.debug('%s: ws -> broadcast/multicast (%d bytes)', self.remote_ip, len(message))
                     for client in macmap.values():
+                        if client is self:
+                            continue
                         try:
-                                _fire_and_forget(client.ws.send(message))
+                            _fire_and_forget(client.ws.send(message))
                         except:
                             pass
 

@@ -118,3 +118,18 @@ async def test_mac_can_be_reused_after_owner_disconnects(tap):
     b.on_message(frame(GATEWAY_MAC, MAC_A))
 
     assert switchedrelay.macmap[MAC_A] is b
+
+
+async def test_broadcast_goes_to_other_clients_and_tap_but_not_sender(tap):
+    a_ws, b_ws = FakeWebSocket(), FakeWebSocket()
+    a, b = ClientHandler(a_ws), ClientHandler(b_ws)
+    b.on_message(frame(GATEWAY_MAC, MAC_B))
+    tap.written.clear()
+
+    f = frame(BROADCAST, MAC_A)
+    a.on_message(f)
+    await settle()
+
+    assert a_ws.sent == []
+    assert b_ws.sent == [f]
+    assert tap.written == [f]
