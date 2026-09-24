@@ -24,4 +24,5 @@ iptables-save
 #########################################
 
 dnsmasq --conf-dir=/etc/dnsmasq.d
-/opt/websockproxy/.venv/bin/python -m websockproxy.switchedrelay
+# exec so the relay replaces this shell as PID 1 and receives SIGTERM
+exec /opt/websockproxy/.venv/bin/python -m websockproxy.switchedrelay
