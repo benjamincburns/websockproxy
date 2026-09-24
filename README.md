@@ -71,6 +71,32 @@ any other peer, since clients could otherwise forge it:
 docker run --privileged -p 8080:80 -e WEBSOCKPROXY_TRUSTED_PROXIES=172.17.0.1 --name relay websockproxy
 ```
 
+#### Guest network access
+
+By default, guests can reach the public internet, and can use the container
+itself only for DHCP, DNS and ping. Traffic to non-public addresses is
+dropped, including the docker host, other containers, your local network,
+cloud metadata services (169.254.169.254) and CGNAT/VPN ranges. Nothing
+outside can open connections to guests. Guests on the relay can always reach
+each other, since the relay switches their frames directly.
+
+Two environment variables adjust this (both take comma- or space-separated
+lists):
+
+- `WEBSOCKPROXY_EGRESS_INTERFACES`: the container interfaces guest traffic
+  may leave through. Defaults to the interface(s) carrying the IPv4 default
+  route. The container refuses to start if a listed interface doesn't exist.
+- `WEBSOCKPROXY_ALLOWED_PRIVATE_NETS`: IPv4 CIDRs guests may reach even
+  though they're non-public, such as a service on your LAN. Empty by default.
+
+```shell
+docker run --privileged -p 8080:80 -e WEBSOCKPROXY_ALLOWED_PRIVATE_NETS=192.168.1.20/32 --name relay websockproxy
+```
+
+The container can't see the host's own public addresses, so guests can
+still reach services the host exposes on them. Use host-side firewall rules
+to block those.
+
 ### Testing
 
 A test script is included that connects to the relay via WebSocket, obtains a
