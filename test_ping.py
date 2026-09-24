@@ -2,7 +2,7 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#     "scapy",
+#     "scapy>=2.6",
 #     "websockets>=14.0,<17",
 # ]
 # ///
@@ -222,12 +222,10 @@ class WebSocketNIC:
         )
         await self.send_frame(raw(pkt))
         reply = await self._wait_for("dns", timeout=5)
-        ans = reply[DNS].an
-        for _ in range(reply[DNS].ancount):
-            if ans.type == 1:  # A record
+        for ans in reply[DNS].an:
+            if ans.type == 1:  # A record (possibly after CNAMEs)
                 logger.info(f"DNS   {hostname} -> {ans.rdata}")
                 return ans.rdata
-            ans = ans.payload
         raise RuntimeError(f"No A record in DNS response for {hostname}")
 
     # ── ICMP ping ────────────────────────────────────────────────────
