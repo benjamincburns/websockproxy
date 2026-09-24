@@ -1,3 +1,4 @@
+import os
 import sys
 import errno
 import time
@@ -5,6 +6,7 @@ import logging
 import traceback
 import asyncio
 import socket as socket_module
+import ipaddress
 
 from pytun import TunTapDevice, IFF_TAP, IFF_NO_PI
 
@@ -21,6 +23,10 @@ MAX_PENDING_SENDS = 128 #per client; frames beyond this are dropped
 PING_INTERVAL = 30
 PING_TIMEOUT = 30
 HOST = '0.0.0.0'
+# Proxies (IPs or CIDRs, comma-separated) whose X-Forwarded-For header is trusted.
+TRUSTED_PROXIES = [ipaddress.ip_network(n.strip(), strict=False)
+                   for n in os.environ.get('WEBSOCKPROXY_TRUSTED_PROXIES', '').split(',')
+                   if n.strip()]
 PORT = 80
 
 logger = logging.getLogger('relay')
@@ -29,6 +35,33 @@ logger = logging.getLogger('relay')
 macmap = {}
 tundev = None
 _background_tasks = set()
+
+def _is_trusted_proxy(ip):
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return any(addr in network for network in TRUSTED_PROXIES)
+
+def client_ip(peer_ip, forwarded_for):
+    """Resolve a client's IP from X-Forwarded-For.
+
+    The header is only honoured when the peer is a trusted proxy. Walking
+    it from the right, the first address not belonging to a trusted proxy
+    is the client; anything further left was supplied by the client and
+    can't be trusted.
+    """
+    ip = peer_ip
+    for hop in reversed(forwarded_for.split(',')):
+        if not _is_trusted_proxy(ip):
+            break
+        hop = hop.strip()
+        try:
+            ipaddress.ip_address(hop)
+        except ValueError:
+            break
+        ip = hop
+    return ip
 
 def format_mac(mac):
     return ':'.join('{0:02x}'.format(a) for a in mac)
@@ -123,7 +156,7 @@ class ClientHandler:
         if hasattr(websocket, 'request') and websocket.request is not None:
             forwarded_for = websocket.request.headers.get('X-Forwarded-For')
             if forwarded_for:
-                self.remote_ip = forwarded_for
+                self.remote_ip = client_ip(self.remote_ip, forwarded_for)
         logger.info('%s: connected.' % self.remote_ip)
         self.thread = None
         self.mac = b''

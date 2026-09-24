@@ -62,6 +62,15 @@ along with a more isolated docker bridge and some host-side firewall rules
 which prevent clients of your relay from attempting to connect to your host
 machine.
 
+When running behind a reverse proxy, set `WEBSOCKPROXY_TRUSTED_PROXIES` to a
+comma-separated list of the proxy's IPs or CIDR ranges (as seen by the relay)
+so client IPs are logged from `X-Forwarded-For`. The header is ignored from
+any other peer, since clients could otherwise forge it:
+
+```shell
+docker run --privileged -p 8080:80 -e WEBSOCKPROXY_TRUSTED_PROXIES=172.17.0.1 --name relay websockproxy
+```
+
 ### Testing
 
 A test script is included that connects to the relay via WebSocket, obtains a
