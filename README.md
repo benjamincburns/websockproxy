@@ -3,7 +3,10 @@
 A websocket ethernet switch built using Python's asyncio and the
 [websockets](https://websockets.readthedocs.io/) library.
 
-Implements crude rate limiting on WebSocket connections to prevent abuse.
+Implements crude rate limiting on WebSocket connections to prevent abuse. Each
+client is limited to 40980 bytes per second in each direction by default; set
+`WEBSOCKPROXY_RATE_LIMIT` to change the limit, or to `0` to disable it (e.g.
+on a trusted local network).
 
 Could use some cleanup!
 

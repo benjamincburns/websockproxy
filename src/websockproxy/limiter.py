@@ -9,6 +9,9 @@ class RateLimitingState(object):
         self.last_check = time.monotonic()
 
     def do_throttle(self, message):
+        if self.rate == 0: # rate limiting disabled
+            return True
+
         current = time.monotonic()
         time_passed = current - self.last_check
 

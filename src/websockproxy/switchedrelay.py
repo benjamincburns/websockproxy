@@ -17,7 +17,21 @@ import websockets
 
 
 FORMAT = '%(asctime)-15s %(message)s'
-RATE = 40980.0 #unit: bytes
+
+def _env_rate(name, default):
+    value = os.environ.get(name, '').strip()
+    if not value:
+        return default
+    try:
+        rate = float(value)
+    except ValueError:
+        rate = float('nan')
+    if not rate >= 0:
+        raise ValueError(f'{name} must be a non-negative number of bytes per second, got {value!r}')
+    return rate
+
+# Per-client limit in each direction, in bytes per second; 0 disables throttling
+RATE = _env_rate('WEBSOCKPROXY_RATE_LIMIT', 40980.0)
 ETHERNET_HEADER_LEN = 14 #dst mac, src mac, ethertype
 BROADCAST = b'\xff\xff\xff\xff\xff\xff'
 MAX_PENDING_SENDS = 128 #per client; frames beyond this are dropped

@@ -33,3 +33,9 @@ def test_wall_clock_jumping_backwards_does_not_throttle(monkeypatch):
     clock.mono += 1
 
     assert state.do_throttle(b'x' * 100)
+
+
+def test_zero_rate_disables_throttling():
+    state = RateLimitingState(0, clientip='test', name='upstream')
+
+    assert all(state.do_throttle(b'x' * 1_000_000) for _ in range(100))
