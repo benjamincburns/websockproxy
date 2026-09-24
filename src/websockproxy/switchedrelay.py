@@ -1,7 +1,6 @@
 import os
 import sys
 import errno
-import time
 import logging
 import traceback
 import asyncio
@@ -158,12 +157,9 @@ class ClientHandler:
         if forwarded_for:
             self.remote_ip = client_ip(self.remote_ip, forwarded_for)
         logger.info('%s: connected.' % self.remote_ip)
-        self.thread = None
         self.mac = b''
         self._rejected_mac = None
         self._pending_sends = 0
-        self.allowance = RATE #unit: messages
-        self.last_check = time.time() #floating-point, e.g. usec accuracy. Unit: seconds
         self.upstream = RateLimitingState(RATE, name='upstream', clientip=self.remote_ip)
         self.downstream = RateLimitingState(RATE, name='downstream', clientip=self.remote_ip)
 
@@ -221,9 +217,6 @@ class ClientHandler:
 
     def on_close(self):
         logger.info('%s: disconnected.' % self.remote_ip)
-
-        if self.thread is not None:
-            self.thread.running = False
 
         self._release_mac()
 
