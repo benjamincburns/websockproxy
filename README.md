@@ -46,7 +46,7 @@ basic NAT functionality and dnsmasq for DHCP support.
 To set up the relay via docker simply run
 
 ```shell
-docker run --privileged -p 8080:80 --name relay benjamincburns/websockproxy:latest
+docker run --privileged -p 8080:80 --name relay benjamincburns/jor1k-relay:latest
 ```
 
 If you'd like to build the image yourself instead:
@@ -158,7 +158,7 @@ server, and port 443 (plus port 80 for Caddy) open to the internet.
    ```shell
    docker run -d --privileged -p 127.0.0.1:8080:80 \
        -e WEBSOCKPROXY_TRUSTED_PROXIES=172.17.0.1 \
-       --name relay benjamincburns/websockproxy:latest
+       --name relay benjamincburns/jor1k-relay:latest
    ```
 
    Connections through a published port reach the container from the Docker
@@ -206,7 +206,7 @@ docker run -d --privileged --name relay --network proxy \
     -l traefik.http.routers.relay.entrypoints=websecure \
     -l traefik.http.routers.relay.tls.certresolver=myresolver \
     -l traefik.http.services.relay.loadbalancer.server.port=80 \
-    benjamincburns/websockproxy:latest
+    benjamincburns/jor1k-relay:latest
 ```
 
 Giving Traefik the Docker socket gives it control of Docker; see Traefik's
