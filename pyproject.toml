@@ -1,7 +1,7 @@
 [project]
 name = "websockproxy"
 version = "0.1.0"
-description = "A virtual ethernet switch for browser-based VMs (e.g. jor1k, v86, etc). Transmits ethernet frames via websocket."
+description = "An Ethernet-over-WebSocket relay for emulators that run in a web browser, such as jor1k and v86."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"

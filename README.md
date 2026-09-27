@@ -1,13 +1,25 @@
-# WebSockets Proxy
+# websockproxy
 
-A websocket ethernet switch built using Python's asyncio and the
-[websockets](https://websockets.readthedocs.io/) library.
+**An Ethernet-over-WebSocket relay for emulators that run in a web browser.**
 
-Implements crude rate limiting on WebSocket connections to prevent abuse. Each
-client is limited to 40980 bytes per second in each direction by default; see
-[Configuration](#configuration) to change or disable it.
+Browsers don't let web pages open raw network connections, so emulators like
+[jor1k](https://github.com/s-macke/jor1k) and [v86](https://github.com/copy/v86)
+can't reach a network on their own. Instead, the emulator's virtual network
+card sends raw Ethernet frames to this relay over a WebSocket. The relay puts
+every connected emulator on a shared virtual LAN and connects that LAN to the
+outside world: it hands out addresses (DHCP), answers DNS, and gives guests
+internet access through the host (NAT).
 
-Could use some cleanup!
+In v86's documentation this is a `wsproxy` backend. It's the software behind
+the public relay at `wss://relay.widgetry.org/`.
+
+- Per-client rate limiting (configurable, or off; see
+  [Configuration](#configuration))
+- Guests can reach the public internet, but not private addresses such as
+  your local network or the Docker host (see
+  [Guest network access](#guest-network-access))
+- Runs in Docker or directly on a Linux host; serve `wss://` behind a TLS
+  reverse proxy (see [Serving over TLS](#serving-over-tls-wss))
 
 ## How it works
 
