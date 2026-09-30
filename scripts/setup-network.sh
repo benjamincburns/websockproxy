@@ -36,6 +36,7 @@ remove_all() {
     delete_chain iptables filter GUEST_INPUT
     delete_chain iptables filter GUEST_FORWARD
     delete_chain iptables filter GUEST_EGRESS  # after GUEST_FORWARD, which jumps to it
+    delete_chain iptables filter GUEST_ABUSE
     delete_chain iptables nat GUEST_NAT
     if ip6tables -n -L >/dev/null 2>&1; then
         unjump ip6tables filter GUEST_INPUT6 INPUT -i "$TAP"
@@ -65,6 +66,10 @@ if [ "${1:-}" = "--remove" ]; then
     remove_all
     exit 0
 fi
+
+# Optional destination-wide abuse policy. The DNS poller owns its ipsets and
+# must be stopped separately; --remove deliberately retains its saved state.
+source "$(dirname "${BASH_SOURCE[0]}")/abuse-network.sh"
 
 # Interfaces guest traffic may leave through (comma or space separated).
 # Defaults to the interface(s) carrying the IPv4 default route.
@@ -116,6 +121,10 @@ iptables -A GUEST_INPUT -j DROP
 jump_to iptables filter GUEST_INPUT INPUT -i "$TAP"
 
 fresh_chain iptables filter GUEST_EGRESS
+install_abuse_rules
+if (( ABUSE_ENABLED )); then
+    iptables -A GUEST_EGRESS -j GUEST_ABUSE
+fi
 for net in $ALLOWED_PRIVATE_NETS; do
     iptables -A GUEST_EGRESS -d "$net" -j ACCEPT
 done
@@ -152,4 +161,7 @@ if ip6tables -n -L >/dev/null 2>&1; then
     ip6tables -A GUEST_FORWARD6 -j DROP
     jump_to ip6tables filter GUEST_FORWARD6 FORWARD -i "$TAP"
     jump_to ip6tables filter GUEST_FORWARD6 FORWARD -o "$TAP"
+elif (( ABUSE_ENABLED )); then
+    echo "Abuse mitigation requires the IPv6 guest firewall." >&2
+    exit 1
 fi

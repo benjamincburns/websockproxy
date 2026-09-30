@@ -11,19 +11,20 @@ COPY src/ /opt/websockproxy/src/
 WORKDIR /opt/websockproxy/
 
 # Install exactly what uv.lock pins; fail rather than re-resolve if it's stale
-RUN uv sync --frozen --no-dev --no-editable
+RUN uv sync --frozen --no-dev --no-editable --extra abuse
 
 # Runtime stage
 FROM python:3.12-alpine
 
 LABEL org.opencontainers.image.authors="benjamin.c.burns@gmail.com"
 
-RUN apk add --no-cache iptables dnsmasq iproute2 bash
+RUN apk add --no-cache iptables ipset dnsmasq iproute2 bash
 
 COPY --from=builder /opt/websockproxy/ /opt/websockproxy/
 COPY docker-image-config/dnsmasq/interface docker-image-config/dnsmasq/dhcp /etc/dnsmasq.d/
 COPY docker-image-config/docker-startup.sh /opt/websockproxy/docker-startup.sh
 COPY scripts/setup-network.sh /opt/websockproxy/setup-network.sh
+COPY scripts/abuse-network.sh /opt/websockproxy/abuse-network.sh
 
 WORKDIR /opt/websockproxy/
 

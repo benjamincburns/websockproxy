@@ -15,6 +15,8 @@ the public relay at `wss://relay.widgetry.org/`.
 
 - Per-client rate limiting (configurable, or off; see
   [Configuration](#configuration))
+- Optional DNS-maintained destination blocking and destination-wide connection,
+  packet and byte limits (see [Abuse mitigation](#abuse-mitigation))
 - Guests can reach the public internet, but not private addresses such as
   your local network or the Docker host (see
   [Guest network access](#guest-network-access))
@@ -102,6 +104,81 @@ guests can still reach services the host exposes on them. Use host-side
 firewall rules to block those. (On a host install, traffic to the host's own
 addresses is covered by the rules above.)
 
+#### Abuse mitigation
+
+All abuse mitigation features are **disabled by default** and can be enabled
+independently. They apply to guest traffic routed out of `tap0`. Each rate
+budget is shared by **all guests and destination ports for one destination
+IPv4 address**, across all configured egress interfaces. They do not limit
+other programs on the host or the WebSocket transport itself.
+
+For example (choose rates appropriate to your deployment):
+
+```shell
+docker run --privileged -p 8080:80 --name relay \
+    -v relay-blocklist:/var/lib/websockproxy \
+    -e 'WEBSOCKPROXY_BLOCKED_DOMAINS=example.net,*.example.net,api.example.net' \
+    -e WEBSOCKPROXY_DESTINATION_CONNECT_RATE=30/minute \
+    -e WEBSOCKPROXY_DESTINATION_CONNECT_BURST=10 \
+    -e WEBSOCKPROXY_DESTINATION_PACKET_RATE=100/second \
+    -e WEBSOCKPROXY_DESTINATION_PACKET_BURST=200 \
+    -e WEBSOCKPROXY_DESTINATION_BYTE_RATE=65536 \
+    -e WEBSOCKPROXY_DESTINATION_BYTE_BURST=131072 \
+    websockproxy
+```
+
+The domain list is a list of DNS names to **poll**, not a URL filter. A
+background process resolves every configured name itself using the container's
+resolver (or `WEBSOCKPROXY_BLOCKLIST_DNS_SERVERS`), follows CNAMEs, and collects
+all returned A and AAAA addresses. Guests can use their own DNS or connect to
+an IP directly; traffic to an address already in the denylist is still blocked
+on every port and protocol, including on existing connections. Guest IPv6 is
+blocked entirely, as with the normal network setup. Enabling any mitigation
+requires a working IPv6 firewall, so it cannot silently bypass the policy.
+
+**Wildcard coverage:** `*.example.net` polls that literal DNS wildcard record.
+It does **not** enumerate all names beneath `example.net`, and the wildcard
+need not exist. List known subdomains with their own addresses explicitly,
+such as `api.example.net`. Names behind geographic or rotating DNS may return
+addresses this resolver has never seen. Complete zone coverage requires an
+inventory from the DNS operator; ordinary DNS polling cannot guarantee it.
+Blocking an address also blocks unrelated services sharing that address.
+
+The poller refreshes at the shorter of the DNS TTL and
+`WEBSOCKPROXY_BLOCKLIST_REFRESH`, with a minimum interval of five seconds.
+New addresses are added at the next successful refresh. When a successful
+lookup stops returning an address, its retirement grace period begins. The
+address is removed only on a later successful lookup that still omits it,
+after both its previously observed TTL and the grace period have expired,
+and only if no other configured name still requires it. Reappearing addresses
+reset that grace period. A confirmed NXDOMAIN or NODATA answer can retire
+addresses; a timeout or SERVFAIL preserves the previous addresses and retries.
+This is an observation policy, not proof that an address has disappeared from
+every possible DNS answer.
+
+State is saved atomically to `WEBSOCKPROXY_BLOCKLIST_STATE`; mount the directory
+as shown above to retain it when replacing containers. Removing a name from
+the configuration removes its contribution on restart. Corrupt state, failed
+firewall updates, or initial resolution failures with no saved result prevent
+startup. During temporary DNS failures, saved addresses remain blocked and
+warnings appear in the logs. The live IP set is replaced atomically. The
+container stops if its poller, dnsmasq, or relay exits.
+
+Connection limits count TCP SYN attempts, including retransmissions before a
+reply. Packet and byte limits cover all outbound guest IP packets, including
+UDP and established TCP traffic. Excess packets are dropped, not queued, so
+connections can slow down or time out. Byte limits use the kernel's accounting
+granularity. Shared hosting also shares a destination's rate budget.
+**None of these settings count HTTP requests** or inspect/decrypt TLS.
+
+Inspect the running policy with:
+
+```shell
+docker exec relay ipset list wsp_block4
+docker exec relay iptables -nvxL GUEST_ABUSE
+docker logs relay
+```
+
 ### Running on a Linux host
 
 To run the relay without Docker you need a Linux host with root access,
@@ -144,6 +221,16 @@ To undo it, stop the relay and dnsmasq, then remove the rules and `tap0`
 sudo kill "$(cat /run/websockproxy-dnsmasq.pid)"
 sudo scripts/setup-network.sh --remove
 ```
+
+The destination rate limits also work on host installs. For DNS blocking,
+install `ipset` and run `uv sync --extra abuse`. Pass the same
+`WEBSOCKPROXY_BLOCKED_DOMAINS` setting to the network setup and to
+`.venv/bin/websockproxy-blocklist`: run the helper with `--once` before opening
+guest access, then supervise it without `--once` alongside the relay. The
+Docker image handles that lifecycle automatically. Stop the helper before
+removing the network rules. `--remove` retains the helper's saved state and
+IP sets; after stopping it and removing the rules, the sets can be deleted
+with `ipset destroy wsp_block4` and `ipset destroy wsp_block4_next`.
 
 ### Serving over TLS (wss://)
 
@@ -236,6 +323,15 @@ device:
 uv run pytest
 ```
 
+The firewall integration tests send real packets in disposable Linux network
+namespaces. They are skipped by default and require root, `iproute2`,
+`iptables`/`ip6tables`, and `ipset`:
+
+```shell
+sudo env WEBSOCKPROXY_RUN_NETWORK_TESTS=1 \
+    .venv/bin/python -m pytest tests/test_network_integration.py
+```
+
 An end-to-end test script is included that connects to the relay via WebSocket, obtains a
 DHCP lease, resolves a hostname with DNS, and sends ICMP pings through the
 proxy. It uses [PEP 723](https://peps.python.org/pep-0723/) inline metadata,
@@ -283,6 +379,30 @@ see [Guest network access](#guest-network-access).
 |---|---|---|---|
 | `WEBSOCKPROXY_EGRESS_INTERFACES` | The interface(s) carrying the IPv4 default route | Comma- or space-separated names of existing network interfaces, other than `tap0` | Interfaces guest traffic may leave through; NAT is applied on these. Traffic to any other interface is dropped. Setup fails if there's no default route and this isn't set. |
 | `WEBSOCKPROXY_ALLOWED_PRIVATE_NETS` | *(none)* | Comma- or space-separated IPv4 CIDRs (e.g. `192.168.1.20/32`) | Non-public destinations guests may reach anyway. All other non-public addresses (private ranges, loopback, link-local, CGNAT and so on) are blocked. |
+| `WEBSOCKPROXY_BLOCKED_DOMAINS` | *(none)* | Comma- or space-separated DNS names; at most 256 | Enables the DNS-maintained IP denylist. Include individual subdomains and, optionally, literal wildcard records. The denylist takes precedence over allowed private networks. See [Abuse mitigation](#abuse-mitigation). |
+| `WEBSOCKPROXY_DESTINATION_CONNECT_RATE` | `0` (disabled) | `0`, `N/second`, or `N/minute` | Maximum sustained TCP connection-attempt rate per destination IP. `N` is a positive integer of at most seven digits. |
+| `WEBSOCKPROXY_DESTINATION_CONNECT_BURST` | `10` | Integer 1–1000000 | Initial and maximum connection-attempt bucket capacity. Ignored when its rate is disabled. |
+| `WEBSOCKPROXY_DESTINATION_PACKET_RATE` | `0` (disabled) | `0`, `N/second`, or `N/minute` | Maximum sustained packet rate per destination IP, across all IP protocols. |
+| `WEBSOCKPROXY_DESTINATION_PACKET_BURST` | `100` | Integer 1–1000000 | Initial and maximum packet bucket capacity. Ignored when its rate is disabled. |
+| `WEBSOCKPROXY_DESTINATION_BYTE_RATE` | `0` (disabled) | `0` or integer 1024–1000000000 | Maximum sustained bytes per second per destination IP, across all IP protocols. |
+| `WEBSOCKPROXY_DESTINATION_BYTE_BURST` | `65536` | Integer 1500–1000000000 | Byte burst allowance. Ignored when its rate is disabled. |
+
+Some rate/burst combinations exceed kernel limits and are rejected at startup.
+Unused destination buckets expire only after enough idle time to refill them.
+Each rate limiter tracks at most 65536 destinations.
+
+### DNS blocklist poller
+
+Read by `websockproxy-blocklist`, which Docker starts automatically when
+`WEBSOCKPROXY_BLOCKED_DOMAINS` is nonempty. These settings do not change the
+DNS servers advertised to guests.
+
+| Variable | Default | Allowed values | Description |
+|---|---|---|---|
+| `WEBSOCKPROXY_BLOCKLIST_REFRESH` | `300` | Integer 5–86400 | Maximum seconds between successful refreshes; shorter TTLs trigger earlier lookups. Failed lookups retry within 30 seconds. |
+| `WEBSOCKPROXY_BLOCKLIST_RETIRE_GRACE` | `3600` | Integer 0–604800 | Seconds an address must remain absent from successful lookups before retirement; its last observed TTL must also have expired. |
+| `WEBSOCKPROXY_BLOCKLIST_STATE` | `/var/lib/websockproxy/blocklist.json` | File path | Persistent address history. Only one poller may use this state file at a time. |
+| `WEBSOCKPROXY_BLOCKLIST_DNS_SERVERS` | System resolver | Comma- or space-separated resolver IP addresses | Resolvers used by the poller, independently of guest DNS. |
 
 ### Fixed settings
 
